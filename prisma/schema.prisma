@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum MessageStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id        String   @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  threads   Thread[]
+  votes     Vote[]
+
+  @@map("users")
+}
+
+model Thread {
+  id        String   @id @default(cuid())
+  ownerId   String
+  title     String?
+  isPublic  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner    User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  turns    Turn[]
+  messages Message[]
+  votes    Vote[]
+
+  @@index([ownerId, updatedAt])
+  @@map("threads")
+}
+
+model Turn {
+  id        String   @id @default(cuid())
+  threadId  String
+  position  Int
+  prompt    String   @db.Text
+  createdAt DateTime @default(now())
+
+  thread   Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  messages Message[]
+  votes    Vote[]
+
+  @@unique([threadId, position])
+  @@index([threadId, createdAt])
+  @@map("turns")
+}
+
+model Message {
+  id                  String        @id @default(cuid())
+  threadId            String
+  turnId              String
+  model               String
+  role                MessageRole
+  status              MessageStatus @default(PENDING)
+  content             String        @db.Text
+  inputTokens         Int?
+  outputTokens        Int?
+  totalTokens         Int?
+  timeToFirstTokenMs  Float?
+  durationMs          Float?
+  tokensPerSecond     Float?
+  costUsd             Decimal       @default(0) @db.Decimal(12, 6)
+  createdAt           DateTime      @default(now())
+  completedAt         DateTime?
+
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  turn   Turn   @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  votes  Vote[]
+
+  @@index([threadId, model, createdAt])
+  @@index([turnId, model])
+  @@unique([id, turnId])
+  @@map("messages")
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  userId    String
+  threadId  String
+  turnId    String
+  messageId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread  Thread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  turn    Turn    @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId, turnId], references: [id, turnId], onDelete: Cascade)
+
+  @@unique([userId, turnId])
+  @@index([threadId, createdAt])
+  @@index([messageId])
+  @@map("votes")
+}
