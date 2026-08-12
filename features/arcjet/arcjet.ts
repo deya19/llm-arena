@@ -21,18 +21,21 @@ export const validateArcjetEnvironment = (): void => {
   requiredEnvironmentVariable("ARCJET_KEY");
 };
 
-const aj = arcjet({
+const arcjetClient = createRemoteClient({ timeout: 5000 });
+
+const baseArcjet = arcjet({
   key: requiredEnvironmentVariable("ARCJET_KEY"),
-  client: createRemoteClient({ timeout: 5000 }),
+  client: arcjetClient,
   rules: [shield({ mode: "LIVE" })],
-})
+});
+
+const requestArcjet = baseArcjet
   .withRule(
     detectBot({
       mode: "LIVE",
       deny: ["CATEGORY:BOTNET"],
     }),
   )
-  .withRule(detectPromptInjection({ mode: "LIVE" }))
   .withRule(
     slidingWindow({
       mode: "LIVE",
@@ -41,11 +44,20 @@ const aj = arcjet({
     }),
   );
 
+const promptArcjet = arcjet({
+  key: requiredEnvironmentVariable("ARCJET_KEY"),
+  client: arcjetClient,
+  rules: [detectPromptInjection({ mode: "LIVE" })],
+});
+
+export const protectRequest = (request: Request): Promise<ArcjetDecision> =>
+  requestArcjet.protect(request);
+
 export const protectModelRequest = (
   request: Request,
   prompt: string,
 ): Promise<ArcjetDecision> =>
-  aj.protect(request, {
+  promptArcjet.protect(request, {
     detectPromptInjectionMessage: prompt,
   });
 
