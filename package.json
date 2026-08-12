@@ -9,18 +9,32 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.61",
+    "@arcjet/next": "^1.9.1",
+    "@clerk/nextjs": "^7.7.1",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "ai": "^7.0.58",
     "next": "16.3.0",
+    "pg": "^8.23.0",
+    "posthog-js": "^1.414.0",
+    "posthog-node": "^5.48.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.21.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
+    "prisma": "^7.9.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.12",
     "typescript": "^5"
   }
 }
