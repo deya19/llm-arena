@@ -91,7 +91,7 @@ Build checklist:
 - [x] Apply the initial migration to the configured Postgres database
 - [x] Generate and verify the Prisma client
 
-Data-access continuation decision: Keep the existing schema and enforce its cross-record rules in a feature-local repository. Thread creation and turn appends are transactional, assistant messages move from pending to completed or failed exactly once, thread history is returned in stable order, and votes require a completed assistant message plus two distinct completed model responses. Duplicate votes return the existing vote instead of surfacing a database exception. Database configuration is validated during Node startup.
+Data-access continuation decision: Keep the existing schema and enforce its cross-record rules in a feature-local repository. Thread creation and turn appends are transactional; turn appends lock the parent thread row before reading the maximum position so concurrent submissions for one thread serialize safely. Assistant messages move from pending to completed or failed exactly once, thread history is returned in stable order, and votes require a completed assistant message plus two distinct completed model responses. Duplicate votes return the existing vote instead of surfacing a database exception. Database configuration is validated during Node startup.
 
 Data-access build checklist:
 

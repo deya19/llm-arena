@@ -149,12 +149,16 @@ export const appendTurn = async (input: AppendTurnInput): Promise<Turn> => {
   const prompt = requireValue(input.prompt, "A non-empty prompt is required.");
 
   return prisma.$transaction(async (tx) => {
-    const thread = await tx.thread.findUnique({
-      where: { id: threadId },
-      select: { id: true },
-    });
+    const lockedThreads = await tx.$queryRaw<ReadonlyArray<{ id: string }>>(
+      Prisma.sql`
+        SELECT "id"
+        FROM "threads"
+        WHERE "id" = ${threadId}
+        FOR UPDATE
+      `,
+    );
 
-    if (thread === null) {
+    if (lockedThreads.length === 0) {
       throw new DataModelError("NOT_FOUND", "The requested thread was not found.");
     }
 
