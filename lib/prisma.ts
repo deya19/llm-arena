@@ -15,6 +15,10 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
+export const validateDatabaseEnvironment = (): void => {
+  requiredDatabaseUrl();
+};
+
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({

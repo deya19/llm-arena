@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+build
+coverage
+prisma/migrations
+next-env.d.ts
+.env*
+.agents
+.claude
+AGENTS.md
+posthog-self-driving-report.md

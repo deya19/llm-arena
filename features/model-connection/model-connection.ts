@@ -190,7 +190,9 @@ export const createModelConnectionStream = (
             console.error("Model provider stream failed", {
               model: request.model,
               error:
-                part.error instanceof Error ? part.error.message : "Unknown provider error",
+                part.error instanceof Error
+                  ? part.error.message
+                  : "Unknown provider error",
             });
             enqueue(errorEvent(request.model));
             close();

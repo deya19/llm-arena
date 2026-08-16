@@ -37,9 +37,7 @@ const hasOversizedContentLength = (request: Request): boolean => {
   return !Number.isSafeInteger(length) || length > MAX_REQUEST_BODY_BYTES;
 };
 
-const parseRequestBody = async (
-  request: Request,
-): Promise<ParsedRequestBody> => {
+const parseRequestBody = async (request: Request): Promise<ParsedRequestBody> => {
   if (request.body === null) {
     return { type: "invalid" };
   }
@@ -83,10 +81,7 @@ const parseRequestBody = async (
 
 export async function POST(request: NextRequest): Promise<Response> {
   if (hasOversizedContentLength(request)) {
-    return Response.json(
-      { message: REQUEST_TOO_LARGE_MESSAGE },
-      { status: 413 },
-    );
+    return Response.json({ message: REQUEST_TOO_LARGE_MESSAGE }, { status: 413 });
   }
 
   const earlyArcjetDecision = await protectRequest(request);
@@ -99,32 +94,20 @@ export async function POST(request: NextRequest): Promise<Response> {
   const parsedBody = await parseRequestBody(request.clone());
 
   if (parsedBody.type === "too-large") {
-    return Response.json(
-      { message: REQUEST_TOO_LARGE_MESSAGE },
-      { status: 413 },
-    );
+    return Response.json({ message: REQUEST_TOO_LARGE_MESSAGE }, { status: 413 });
   }
 
   if (parsedBody.type === "invalid") {
-    return Response.json(
-      { message: INVALID_REQUEST_MESSAGE },
-      { status: 400 },
-    );
+    return Response.json({ message: INVALID_REQUEST_MESSAGE }, { status: 400 });
   }
 
   const connectionRequest = parseModelConnectionRequest(parsedBody.value);
 
   if (connectionRequest === null) {
-    return Response.json(
-      { message: INVALID_REQUEST_MESSAGE },
-      { status: 400 },
-    );
+    return Response.json({ message: INVALID_REQUEST_MESSAGE }, { status: 400 });
   }
 
-  const arcjetDecision = await protectModelRequest(
-    request,
-    connectionRequest.prompt,
-  );
+  const arcjetDecision = await protectModelRequest(request, connectionRequest.prompt);
   const denialResponse = toArcjetDenialResponse(arcjetDecision);
 
   if (denialResponse !== null) {
