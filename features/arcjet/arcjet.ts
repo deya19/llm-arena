@@ -61,9 +61,7 @@ export const protectModelRequest = (
     detectPromptInjectionMessage: prompt,
   });
 
-export const toArcjetDenialResponse = (
-  decision: ArcjetDecision,
-): Response | null => {
+export const toArcjetDenialResponse = (decision: ArcjetDecision): Response | null => {
   if (!decision.isDenied()) {
     if (decision.isErrored()) {
       console.error("Arcjet protection failed open");

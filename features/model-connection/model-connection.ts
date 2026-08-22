@@ -28,6 +28,27 @@ const getOpenRouter = () =>
 export type ModelConnectionRequest = Readonly<{
   model: string;
   prompt: string;
+  history?: readonly Readonly<{
+    role: "user" | "assistant";
+    content: string;
+  }>[];
+}>;
+
+export type ModelConnectionFinish = Readonly<{
+  content: string;
+  usage: Readonly<{
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+  }>;
+  timeToFirstTokenMs: number | null;
+  durationMs: number;
+  tokensPerSecond: number | null;
+}>;
+
+export type ModelConnectionCallbacks = Readonly<{
+  onFinish?: (finish: ModelConnectionFinish) => Promise<void>;
+  onError?: () => Promise<void>;
 }>;
 
 type UsageSnapshot = Readonly<{
@@ -126,17 +147,19 @@ const errorEvent = (model: string): StreamEvent => ({
 export const createModelConnectionStream = (
   request: ModelConnectionRequest,
   signal: AbortSignal,
+  callbacks: ModelConnectionCallbacks = {},
 ): ReadableStream<Uint8Array> => {
   const startedAt = performance.now();
   const result = streamText({
     model: getOpenRouter()(request.model),
-    prompt: request.prompt,
+    messages: [...(request.history ?? []), { role: "user", content: request.prompt }],
     abortSignal: signal,
   });
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       let timeToFirstTokenMs: number | null = null;
+      let content = "";
       let isClosed = false;
 
       const enqueue = (event: StreamEvent): void => {
@@ -160,6 +183,7 @@ export const createModelConnectionStream = (
             }
 
             if (part.text.length > 0) {
+              content += part.text;
               enqueue({
                 type: "text",
                 model: request.model,
@@ -172,9 +196,8 @@ export const createModelConnectionStream = (
             const durationMs = round(performance.now() - startedAt);
             const usage = toUsageSnapshot(part.totalUsage);
 
-            enqueue({
-              type: "finish",
-              model: request.model,
+            const finish: ModelConnectionFinish = {
+              content,
               usage,
               timeToFirstTokenMs,
               durationMs,
@@ -183,16 +206,26 @@ export const createModelConnectionStream = (
                 timeToFirstTokenMs,
                 durationMs,
               ),
+            };
+
+            enqueue({
+              type: "finish",
+              model: request.model,
+              ...finish,
             });
+            await callbacks.onFinish?.(finish);
           }
 
           if (part.type === "error") {
             console.error("Model provider stream failed", {
               model: request.model,
               error:
-                part.error instanceof Error ? part.error.message : "Unknown provider error",
+                part.error instanceof Error
+                  ? part.error.message
+                  : "Unknown provider error",
             });
             enqueue(errorEvent(request.model));
+            await callbacks.onError?.();
             close();
             return;
           }
@@ -208,6 +241,7 @@ export const createModelConnectionStream = (
           enqueue(errorEvent(request.model));
         }
 
+        await callbacks.onError?.();
         close();
       }
     },
