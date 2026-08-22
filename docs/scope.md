@@ -22,8 +22,8 @@ There are rough hand-drawn sketches for the arena screen, the leaderboard, and t
 | 2   | Coding standards & tooling                  | Foundation | complete    |
 | 3   | Data model                                  | Foundation | complete    |
 | 4   | Design & look                               | Foundation | complete    |
-| 5   | Model picker                                | Slice 1    | not started |
-| 6   | Send a prompt, parallel streams, and voting | Slice 1    | not started |
+| 5   | Model picker                                | Slice 1    | complete    |
+| 6   | Send a prompt, parallel streams, and voting | Slice 1    | complete    |
 | 7   | App shell & thread history                  | Slice 2    | complete    |
 | 8   | Public thread visibility & sharing          | Slice 3    | not started |
 | 9   | Leaderboard: global & personal              | Slice 4    | not started |
@@ -102,7 +102,7 @@ Data-access build checklist:
 - [x] Add explicit `DATABASE_URL` startup validation
 - [x] Verify formatting, lint, strict typecheck, Prisma schema/client, module loading, and production build
 
-The repository is in `features/data-model/data-model.ts`. `prisma migrate status` was also attempted, but the configured hosted Postgres endpoint was unreachable from this environment (`P1001`); no migration changes were made.
+The repository is in `features/data-model/data-model.ts`. The Prisma Postgres adapter now uses explicit connection and interactive-transaction wait windows, plus an explicit `sslmode=verify-full` normalization for pooled URLs. A direct interactive transaction smoke check succeeds against the configured database; no migration changes were made.
 
 ### 4. Design & look
 
@@ -132,8 +132,21 @@ The visual foundation is complete. Model fetching, streaming, voting, and thread
 
 An "Add model" popover pulling OpenRouter's live free-tier list, sorted by context window, capped at three models, defaulting to all three selected, with removable chips next to the prompt box. Also render that same catalog as a simple `/models` page, name, context window, and pricing for each one, so anyone can browse the full list without opening the picker.
 
-- [ ] Decide the approach
-- [ ] Build it
+Decision: Fetch OpenRouter's `/api/v1/models` catalog through a server-only feature service and expose the normalized free-tier list through `/api/models`. Revalidate the upstream response for five minutes, filter to `:free` entries with zero prompt and completion pricing, sort by descending context window with deterministic name/ID tie breaks, and share that service between the picker API and the client-rendered `/models` catalog. The picker defaults to the first three models, allows removable selections, blocks a fourth selection with an explicit explanation, and provides search, Escape/outside-click closing, keyboard focus, loading, empty, and retry states. No fake catalog is shown when OpenRouter is unavailable.
+
+- [x] Decide the approach
+- [x] Build it
+
+Build checklist:
+
+- [x] Add a server-only normalized OpenRouter free-tier catalog service
+- [x] Add the cached `/api/models` route with safe error responses
+- [x] Replace the composer model placeholders with a live, searchable three-model picker
+- [x] Add the shared live catalog to the `/models` page
+- [x] Add loading, empty, retry, keyboard, and responsive states
+- [x] Run formatting, lint, strict typecheck, production build, and live route/catalog smoke checks
+
+The model catalog is live and shared between the picker and `/models`. Prompt fan-out, response streaming, and voting remain owned by Feature 6.
 
 ### 6. Send a prompt, parallel streams, and voting
 
@@ -159,6 +172,19 @@ Build checklist:
 
 A controlled test with one stable IP sent 12 sequential requests. Requests 1–10 were allowed, and requests 11–12 returned HTTP 429 with the safe rate-limit message. Arcjet reported `max: 10`, `remaining: 0`, and `DENY` for the final requests. The route parses a request clone so Arcjet receives the untouched `NextRequest` for body processing. Prompt-injection evaluation still returned an Arcjet service error during this test and failed open; that is separate from the verified rate-limit rule.
 
+Feature 6 implementation decision: Prepare a turn once through `/api/arena/turn`, reserve one pending assistant message per selected model transactionally, then open independent `/api/model` streams from the browser. Each stream loads its model-specific completed history on the server, persists completion or failure, and can be cancelled without terminating the other streams. Votes go through an authenticated `/api/vote` route and require two distinct completed model responses; the existing unique user/turn constraint handles duplicate votes. The workbench keeps real per-model text and metrics in the UI while leaving failed responses visible.
+
+Feature 6 build checklist:
+
+- [x] Add authenticated turn preparation with Clerk ownership and Arcjet checks
+- [x] Add per-model conversation history and independent provider streams
+- [x] Persist pending, completed, failed, and cancelled model responses
+- [x] Add authenticated vote validation and winner state in the workbench
+- [x] Add prompt, response, generation, failure, and vote analytics capture hooks
+- [x] Run format, lint, strict typecheck, production build, and authenticated-boundary smoke checks
+
+PostHog capture is wired through the analytics boundary, but no PostHog keys are configured in this environment yet, so live event delivery remains pending the PostHog account configuration. No fake analytics success is reported.
+
 ## Slice 2: App shell & thread history
 
 ### 7. App shell & thread history
@@ -180,6 +206,19 @@ Build checklist:
 - [x] Run format, lint, strict typecheck, and production build
 
 The app-shell UI is complete. Real signed-in thread history, thread naming, win records, model responses, and voting remain owned by their later feature slices.
+
+UI continuation decision: Rework the arena from a hero-led comparison workbench into a conversation-first shell inspired by ChatGPT's message flow, without copying its branding or colors. A submitted prompt is rendered as a user node, then branches into up to three model response nodes. The branch layout is horizontal on desktop and stacks vertically on narrow screens; the composer stays near the bottom of the conversation so the next prompt is always available.
+
+UI continuation build checklist:
+
+- [x] Add a conversation-first heading and empty state
+- [x] Render the submitted prompt as the root user node
+- [x] Render model responses as a responsive branching tree
+- [x] Move the prompt composer into the conversation flow with a send action
+- [x] Preserve independent streaming, safe errors, metrics, voting, focus states, and keyboard access
+- [x] Run formatting, lint, strict typecheck, production build, and a live HTTP/browser smoke check
+
+The conversation tree UI is complete. The warm brown/parchment palette, rust interaction accent, sidebar, thread shell, real streams, metrics, and voting behavior remain intact. Status-pill polish now gives streaming, completed, failed, and cancelled states explicit borders, backgrounds, and readable labels at narrow widths. The conversation tree also uses the available workspace width more fully, and its desktop headers move the status badge to a second row when three-column cards become tight. After submission, the composer now clears immediately while the submitted prompt remains visible as the conversation root. Follow-up submissions snapshot the active turn into in-memory thread history, keeping earlier prompts and model answers visible instead of replacing them. The shell navigation is pinned on desktop and remains mobile-safe, while signed-out users see a direct `Sign in to send` composer action.
 
 Authentication continuation: Use Clerk's official Next.js App Router integration. The Clerk proxy establishes session state while keeping the current public routes public; later sending and voting routes can call `auth()` and protect only those actions. Sign-in and sign-up use catch-all routes with the existing warm Arena appearance, and the shell switches between signed-out actions and Clerk's `UserButton`.
 

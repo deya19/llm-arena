@@ -1,26 +1,46 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
+import {
+  trackModelResponseCompleted,
+  trackModelResponseFailed,
+} from "@/features/analytics/analytics";
+import {
+  completeAssistantMessage,
+  DataModelError,
+  failAssistantMessage,
+  getModelTurnContext,
+  getPendingAssistantMessage,
+} from "@/features/data-model/data-model";
 import {
   protectModelRequest,
   protectRequest,
   toArcjetDenialResponse,
 } from "@/features/arcjet/arcjet";
 import {
+  CLIENT_ERROR_MESSAGE,
   createModelConnectionStream,
-  parseModelConnectionRequest,
 } from "@/features/model-connection/model-connection";
 
 export const runtime = "nodejs";
 
-const INVALID_REQUEST_MESSAGE =
-  "Send a non-empty prompt and a free-tier model, then try again.";
+const INVALID_REQUEST_MESSAGE = "Send a prepared model response request and try again.";
 const REQUEST_TOO_LARGE_MESSAGE =
   "This request is too large. Shorten the prompt and try again.";
 const MAX_REQUEST_BODY_BYTES = 128_000;
+const MAX_ID_LENGTH = 200;
+const FREE_MODEL_SUFFIX = ":free";
 
 type ParsedRequestBody =
   | Readonly<{ type: "body"; value: unknown }>
   | Readonly<{ type: "invalid" }>
   | Readonly<{ type: "too-large" }>;
+
+type ModelStreamRequest = Readonly<{
+  threadId: string;
+  turnId: string;
+  messageId: string;
+  model: string;
+}>;
 
 const hasOversizedContentLength = (request: Request): boolean => {
   const contentLength = request.headers.get("content-length");
@@ -79,7 +99,61 @@ const parseRequestBody = async (request: Request): Promise<ParsedRequestBody> =>
   }
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const parseModelStreamRequest = (value: unknown): ModelStreamRequest | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const fields = ["threadId", "turnId", "messageId", "model"] as const;
+  const values = fields.map((field) => value[field]);
+
+  if (
+    values.some(
+      (field) =>
+        typeof field !== "string" ||
+        field.trim().length === 0 ||
+        field.length > MAX_ID_LENGTH,
+    )
+  ) {
+    return null;
+  }
+
+  const [threadId, turnId, messageId, model] = values as [
+    string,
+    string,
+    string,
+    string,
+  ];
+
+  if (!model.endsWith(FREE_MODEL_SUFFIX)) {
+    return null;
+  }
+
+  return {
+    threadId: threadId.trim(),
+    turnId: turnId.trim(),
+    messageId: messageId.trim(),
+    model: model.trim(),
+  };
+};
+
+const dataModelErrorResponse = (error: DataModelError): Response => {
+  const status =
+    error.code === "NOT_FOUND" ? 404 : error.code === "INVALID_STATE" ? 409 : 400;
+
+  return Response.json({ message: error.message }, { status });
+};
+
 export async function POST(request: NextRequest): Promise<Response> {
+  const { userId } = await auth();
+
+  if (!userId) {
+    return Response.json({ message: "Sign in to compare models." }, { status: 401 });
+  }
+
   if (hasOversizedContentLength(request)) {
     return Response.json({ message: REQUEST_TOO_LARGE_MESSAGE }, { status: 413 });
   }
@@ -101,13 +175,41 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ message: INVALID_REQUEST_MESSAGE }, { status: 400 });
   }
 
-  const connectionRequest = parseModelConnectionRequest(parsedBody.value);
+  const streamRequest = parseModelStreamRequest(parsedBody.value);
 
-  if (connectionRequest === null) {
+  if (streamRequest === null) {
     return Response.json({ message: INVALID_REQUEST_MESSAGE }, { status: 400 });
   }
 
-  const arcjetDecision = await protectModelRequest(request, connectionRequest.prompt);
+  let pendingMessage: Awaited<ReturnType<typeof getPendingAssistantMessage>>;
+  let turnContext: Awaited<ReturnType<typeof getModelTurnContext>>;
+
+  try {
+    pendingMessage = await getPendingAssistantMessage({ userId, ...streamRequest });
+
+    if (pendingMessage === null) {
+      return Response.json(
+        { message: "This model response is no longer available. Start again." },
+        { status: 409 },
+      );
+    }
+
+    turnContext = await getModelTurnContext({ userId, ...streamRequest });
+  } catch (error) {
+    if (error instanceof DataModelError) {
+      return dataModelErrorResponse(error);
+    }
+
+    console.error("Model turn lookup failed", {
+      error: error instanceof Error ? error.message : "Unknown turn lookup error",
+    });
+    return Response.json(
+      { message: "The comparison could not be loaded right now. Try again." },
+      { status: 503 },
+    );
+  }
+
+  const arcjetDecision = await protectModelRequest(request, turnContext.prompt);
   const denialResponse = toArcjetDenialResponse(arcjetDecision);
 
   if (denialResponse !== null) {
@@ -117,7 +219,72 @@ export async function POST(request: NextRequest): Promise<Response> {
   let stream: ReadableStream<Uint8Array>;
 
   try {
-    stream = createModelConnectionStream(connectionRequest, request.signal);
+    stream = createModelConnectionStream(
+      {
+        model: pendingMessage.model,
+        prompt: turnContext.prompt,
+        history: turnContext.history,
+      },
+      request.signal,
+      {
+        onFinish: async (finish) => {
+          try {
+            await completeAssistantMessage({
+              threadId: pendingMessage.threadId,
+              turnId: pendingMessage.turnId,
+              messageId: pendingMessage.id,
+              content: finish.content,
+              inputTokens: finish.usage.inputTokens,
+              outputTokens: finish.usage.outputTokens,
+              totalTokens: finish.usage.totalTokens,
+              timeToFirstTokenMs: finish.timeToFirstTokenMs,
+              durationMs: finish.durationMs,
+              tokensPerSecond: finish.tokensPerSecond,
+            });
+            trackModelResponseCompleted(userId, {
+              threadId: pendingMessage.threadId,
+              turnId: pendingMessage.turnId,
+              messageId: pendingMessage.id,
+              model: pendingMessage.model,
+              inputTokens: finish.usage.inputTokens,
+              outputTokens: finish.usage.outputTokens,
+              totalTokens: finish.usage.totalTokens,
+              timeToFirstTokenMs: finish.timeToFirstTokenMs,
+              durationMs: finish.durationMs,
+              tokensPerSecond: finish.tokensPerSecond,
+            });
+          } catch (error) {
+            console.error("Completed model response could not be persisted", {
+              model: pendingMessage.model,
+              error:
+                error instanceof Error ? error.message : "Unknown persistence error",
+            });
+          }
+        },
+        onError: async () => {
+          try {
+            await failAssistantMessage({
+              threadId: pendingMessage.threadId,
+              turnId: pendingMessage.turnId,
+              messageId: pendingMessage.id,
+              message: CLIENT_ERROR_MESSAGE,
+            });
+            trackModelResponseFailed(userId, {
+              threadId: pendingMessage.threadId,
+              turnId: pendingMessage.turnId,
+              messageId: pendingMessage.id,
+              model: pendingMessage.model,
+            });
+          } catch (error) {
+            console.error("Failed model response could not be persisted", {
+              model: pendingMessage.model,
+              error:
+                error instanceof Error ? error.message : "Unknown persistence error",
+            });
+          }
+        },
+      },
+    );
   } catch (error) {
     console.error("Model connection is not configured", {
       error: error instanceof Error ? error.message : "Unknown configuration error",
