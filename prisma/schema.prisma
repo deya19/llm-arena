@@ -13,6 +13,7 @@ enum MessageRole {
 
 enum MessageStatus {
   PENDING
+  STREAMING
   COMPLETED
   FAILED
 }

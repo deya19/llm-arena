@@ -361,25 +361,62 @@ export const createPendingAssistantMessages = async (
   });
 };
 
+type AssistantMessageReference = Readonly<{
+  userId: string;
+  threadId: string;
+  turnId: string;
+  messageId: string;
+  model: string;
+}>;
+
+const assistantMessageReferenceWhere = (input: AssistantMessageReference) => ({
+  id: requireValue(input.messageId, "A message is required."),
+  threadId: requireValue(input.threadId, "A thread is required."),
+  turnId: requireValue(input.turnId, "A thread turn is required."),
+  model: requireValue(input.model, "A model is required."),
+  role: MessageRole.ASSISTANT,
+  thread: {
+    ownerId: requireValue(input.userId, "A user is required."),
+  },
+});
+
 export const getPendingAssistantMessage = async (
-  input: Readonly<{
-    userId: string;
-    threadId: string;
-    turnId: string;
-    messageId: string;
-    model: string;
-  }>,
+  input: AssistantMessageReference,
 ): Promise<PendingAssistantMessage | null> =>
   prisma.message.findFirst({
     where: {
-      id: requireValue(input.messageId, "A message is required."),
-      threadId: requireValue(input.threadId, "A thread is required."),
-      turnId: requireValue(input.turnId, "A thread turn is required."),
-      model: requireValue(input.model, "A model is required."),
-      role: MessageRole.ASSISTANT,
+      ...assistantMessageReferenceWhere(input),
       status: MessageStatus.PENDING,
-      thread: {
-        ownerId: requireValue(input.userId, "A user is required."),
+    },
+    select: {
+      id: true,
+      model: true,
+      threadId: true,
+      turnId: true,
+    },
+  });
+
+export const claimPendingAssistantMessage = async (
+  input: AssistantMessageReference,
+): Promise<PendingAssistantMessage | null> => {
+  const reference = assistantMessageReferenceWhere(input);
+  const result = await prisma.message.updateMany({
+    where: {
+      ...reference,
+      status: MessageStatus.PENDING,
+    },
+    data: { status: MessageStatus.STREAMING },
+  });
+
+  if (result.count !== 1) {
+    return null;
+  }
+
+  return prisma.message.findUniqueOrThrow({
+    where: {
+      id_turnId: {
+        id: input.messageId,
+        turnId: input.turnId,
       },
     },
     select: {
@@ -389,6 +426,7 @@ export const getPendingAssistantMessage = async (
       turnId: true,
     },
   });
+};
 
 export const getModelTurnContext = async (
   input: Readonly<{
@@ -461,7 +499,7 @@ type MessageTransition = Readonly<{
   tokensPerSecond: number | null;
 }>;
 
-const transitionPendingAssistantMessage = async (
+const transitionStreamingAssistantMessage = async (
   input: Readonly<{
     threadId: string;
     turnId: string;
@@ -480,7 +518,7 @@ const transitionPendingAssistantMessage = async (
         threadId,
         turnId,
         role: MessageRole.ASSISTANT,
-        status: MessageStatus.PENDING,
+        status: MessageStatus.STREAMING,
       },
       data: {
         ...input.transition,
@@ -515,7 +553,7 @@ const transitionPendingAssistantMessage = async (
 export const completeAssistantMessage = (
   input: CompleteAssistantMessageInput,
 ): Promise<Message> =>
-  transitionPendingAssistantMessage({
+  transitionStreamingAssistantMessage({
     ...input,
     transition: {
       status: MessageStatus.COMPLETED,
@@ -532,7 +570,7 @@ export const completeAssistantMessage = (
 export const failAssistantMessage = (
   input: FailAssistantMessageInput,
 ): Promise<Message> =>
-  transitionPendingAssistantMessage({
+  transitionStreamingAssistantMessage({
     ...input,
     transition: {
       status: MessageStatus.FAILED,

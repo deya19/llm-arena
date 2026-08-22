@@ -5,6 +5,7 @@ import {
   trackModelResponseFailed,
 } from "@/features/analytics/analytics";
 import {
+  claimPendingAssistantMessage,
   completeAssistantMessage,
   DataModelError,
   failAssistantMessage,
@@ -214,6 +215,29 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   if (denialResponse !== null) {
     return denialResponse;
+  }
+
+  try {
+    pendingMessage = await claimPendingAssistantMessage({ userId, ...streamRequest });
+
+    if (pendingMessage === null) {
+      return Response.json(
+        { message: "This model response is already being generated. Try again later." },
+        { status: 409 },
+      );
+    }
+  } catch (error) {
+    if (error instanceof DataModelError) {
+      return dataModelErrorResponse(error);
+    }
+
+    console.error("Model response claim failed", {
+      error: error instanceof Error ? error.message : "Unknown claim error",
+    });
+    return Response.json(
+      { message: "The comparison could not be started right now. Try again." },
+      { status: 503 },
+    );
   }
 
   let stream: ReadableStream<Uint8Array>;
