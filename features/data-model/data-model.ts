@@ -96,6 +96,12 @@ export type CastVoteInput = Readonly<{
   messageId: string;
 }>;
 
+export type UpdateThreadVisibilityInput = Readonly<{
+  userId: string;
+  threadId: string;
+  isPublic: boolean;
+}>;
+
 export type VoteResult =
   | Readonly<{ type: "created"; vote: Vote }>
   | Readonly<{ type: "already-voted"; vote: Vote }>;
@@ -282,7 +288,10 @@ export const prepareTurnForUser = async (
       position = (latestTurn._max.position ?? -1) + 1;
     } else {
       const thread = await tx.thread.create({
-        data: { ownerId: userId },
+        data: {
+          ownerId: userId,
+          title: prompt.replace(/\s+/g, " ").slice(0, 80),
+        },
         select: { id: true },
       });
       threadId = thread.id;
@@ -597,21 +606,61 @@ export const listThreadsForUser = (userId: string) =>
     },
   });
 
+const threadConversationInclude = () =>
+  ({
+    votes: {
+      select: { turnId: true, messageId: true },
+    },
+    turns: {
+      orderBy: [{ position: "asc" }, { id: "asc" }],
+      include: {
+        messages: {
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        },
+      },
+    },
+  }) satisfies Prisma.ThreadInclude;
+
 export const getThreadById = (threadId: string) =>
   prisma.thread.findUnique({
     where: { id: requireValue(threadId, "A thread is required.") },
     include: {
       owner: true,
-      turns: {
-        orderBy: [{ position: "asc" }, { id: "asc" }],
-        include: {
-          messages: {
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          },
-        },
-      },
+      ...threadConversationInclude(),
     },
   });
+
+export const getPublicThreadById = (threadId: string) =>
+  prisma.thread.findFirst({
+    where: {
+      id: requireValue(threadId, "A thread is required."),
+      isPublic: true,
+    },
+    include: {
+      owner: { select: { id: true } },
+      ...threadConversationInclude(),
+    },
+  });
+
+export const updateThreadVisibility = async (
+  input: UpdateThreadVisibilityInput,
+): Promise<Readonly<{ id: string; isPublic: boolean }>> => {
+  const userId = requireValue(input.userId, "A user is required.");
+  const threadId = requireValue(input.threadId, "A thread is required.");
+  const result = await prisma.thread.updateMany({
+    where: { id: threadId, ownerId: userId },
+    data: { isPublic: input.isPublic },
+  });
+
+  if (result.count !== 1) {
+    throw new DataModelError("NOT_FOUND", "The requested thread was not found.");
+  }
+
+  return prisma.thread.findUniqueOrThrow({
+    where: { id: threadId },
+    select: { id: true, isPublic: true },
+  });
+};
 
 export const castVote = async (input: CastVoteInput): Promise<VoteResult> => {
   const userId = requireValue(input.userId, "A user is required.");
@@ -628,10 +677,10 @@ export const castVote = async (input: CastVoteInput): Promise<VoteResult> => {
 
     const thread = await tx.thread.findUnique({
       where: { id: threadId },
-      select: { ownerId: true },
+      select: { ownerId: true, isPublic: true },
     });
 
-    if (thread === null || thread.ownerId !== userId) {
+    if (thread === null || (!thread.isPublic && thread.ownerId !== userId)) {
       throw new DataModelError("NOT_FOUND", "The requested thread was not found.");
     }
 

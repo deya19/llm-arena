@@ -2,8 +2,9 @@
 
 import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ModelPicker } from "@/features/model-catalog/model-picker";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 type Theme = "dark" | "light";
 type IconName =
@@ -16,6 +17,7 @@ type IconName =
   | "panel"
   | "plus"
   | "send"
+  | "share"
   | "settings"
   | "sun";
 
@@ -39,6 +41,8 @@ const iconPaths: Record<IconName, string> = {
     "M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13ZM9 4v16",
   plus: "M12 5v14M5 12h14",
   send: "m21 3-7.5 18-3.75-7.75L2 9.5 21 3ZM9.75 13.25 21 3",
+  share:
+    "M8 12h8m-5-5 5 5-5 5M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z",
   settings:
     "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-5v2m0 13v2m9-8.5h-2m-14 0H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m0-12.72 1.42 1.42m9.88 9.88 1.42 1.42",
   sun: "M12 3v2m0 14v2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42M3 12h2m14 0h2M5.64 18.36l1.42-1.42m9.88-9.88 1.42-1.42M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
@@ -62,6 +66,10 @@ type DesignShellProps = Readonly<{
   children?: ReactNode;
   contextSubtitle?: string;
   contextTitle?: string;
+  activeThreadId?: string | null;
+  historyRefreshKey?: number;
+  onNewThread?: () => void;
+  onThreadSelect?: (threadId: string, title: string) => void;
 }>;
 
 const models: readonly Model[] = [
@@ -91,10 +99,18 @@ const models: readonly Model[] = [
   },
 ];
 
-const placeholderThreads = [
-  { id: "example-1", title: "A useful first comparison", meta: "Example · Today" },
-  { id: "example-2", title: "Speed versus depth", meta: "Example · Yesterday" },
-] as const;
+type ThreadSummary = Readonly<{
+  id: string;
+  title: string | null;
+  isPublic: boolean;
+  updatedAt: string;
+}>;
+
+const formatThreadDate = (value: string): string =>
+  new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 
 const metrics = [
   { label: "TTFT", value: "—" },
@@ -173,14 +189,115 @@ export function DesignShell({
   children,
   contextSubtitle = "Preview thread",
   contextTitle = "New comparison",
+  activeThreadId = null,
+  historyRefreshKey = 0,
+  onNewThread,
+  onThreadSelect,
 }: DesignShellProps) {
   const { isLoaded: isAuthLoaded, isSignedIn } = useAuth();
+  const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [threads, setThreads] = useState<readonly ThreadSummary[]>([]);
+  const [threadNotice, setThreadNotice] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("dark");
   const [prompt, setPrompt] = useState("");
   const [notice, setNotice] = useState("Three columns. One prompt. No guesswork.");
 
+  useEffect(() => {
+    if (!isAuthLoaded || !isSignedIn) {
+      return;
+    }
+
+    let isCurrent = true;
+
+    fetch("/api/threads", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = (await response.json()) as unknown;
+        if (!response.ok || !Array.isArray(payload)) {
+          throw new Error("history unavailable");
+        }
+        return payload as ThreadSummary[];
+      })
+      .then((nextThreads) => {
+        if (isCurrent) {
+          setThreads(nextThreads);
+          setThreadNotice(null);
+        }
+      })
+      .catch(() => {
+        if (isCurrent) setThreadNotice("Saved threads are unavailable. Try again.");
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [historyRefreshKey, isAuthLoaded, isSignedIn]);
+
+  const visibleThreads = isSignedIn ? threads : [];
+  const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
   const themeLabel = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+
+  const handleShare = async (): Promise<void> => {
+    if (activeThread === null) {
+      setNotice("Open a saved thread before sharing it.");
+      return;
+    }
+
+    if (!activeThread.isPublic) {
+      const response = await fetch(
+        `/api/threads/${encodeURIComponent(activeThread.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isPublic: true }),
+        },
+      );
+
+      if (!response.ok) {
+        setNotice("This thread could not be shared right now. Try again.");
+        return;
+      }
+
+      setThreads((currentThreads) =>
+        currentThreads.map((thread) =>
+          thread.id === activeThread.id ? { ...thread, isPublic: true } : thread,
+        ),
+      );
+    }
+
+    const shareUrl = `${window.location.origin}/threads/${encodeURIComponent(activeThread.id)}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setNotice("Public link copied to your clipboard.");
+    } catch {
+      setNotice(`Share this link: ${shareUrl}`);
+    }
+  };
+
+  const handleMakePrivate = async (): Promise<void> => {
+    if (activeThread === null || !activeThread.isPublic) return;
+
+    const response = await fetch(
+      `/api/threads/${encodeURIComponent(activeThread.id)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPublic: false }),
+      },
+    );
+
+    if (!response.ok) {
+      setNotice("This thread could not be made private right now. Try again.");
+      return;
+    }
+
+    setThreads((currentThreads) =>
+      currentThreads.map((thread) =>
+        thread.id === activeThread.id ? { ...thread, isPublic: false } : thread,
+      ),
+    );
+    setNotice("This thread is private again.");
+  };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -264,13 +381,23 @@ export function DesignShell({
         <div className="arena-thread-list">
           <div className="arena-thread-heading">
             <p className="arena-sidebar-label">Recent threads</p>
-            <span className="arena-thread-count">—</span>
+            <span
+              className="arena-thread-count"
+              aria-label={`${visibleThreads.length} saved threads`}
+            >
+              {visibleThreads.length}
+            </span>
           </div>
           <button
             className="arena-new-thread"
             onClick={() => {
               setPrompt("");
               setNotice("New thread ready for your prompt.");
+              if (onNewThread !== undefined) {
+                onNewThread();
+              } else {
+                router.push("/");
+              }
             }}
             type="button"
           >
@@ -280,21 +407,42 @@ export function DesignShell({
             <span>New thread</span>
           </button>
           <div
-            aria-label="Example thread history"
+            aria-label="Saved thread history"
             className="arena-thread-history"
             role="list"
           >
-            {placeholderThreads.map((thread) => (
-              <div className="arena-thread-item" key={thread.id} role="listitem">
-                <span className="arena-thread-item-title">{thread.title}</span>
-                <span className="arena-thread-item-meta">{thread.meta}</span>
-              </div>
-            ))}
+            {visibleThreads.map((thread) => {
+              const title = thread.title ?? "Untitled comparison";
+              return (
+                <button
+                  aria-current={activeThreadId === thread.id ? "page" : undefined}
+                  className={`arena-thread-item ${activeThreadId === thread.id ? "is-active" : ""}`}
+                  key={thread.id}
+                  onClick={() => {
+                    if (onThreadSelect !== undefined) {
+                      onThreadSelect(thread.id, title);
+                    } else {
+                      router.push(`/?threadId=${encodeURIComponent(thread.id)}`);
+                    }
+                  }}
+                  role="listitem"
+                  type="button"
+                >
+                  <span className="arena-thread-item-title">{title}</span>
+                  <span className="arena-thread-item-meta">
+                    {formatThreadDate(thread.updatedAt)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <p className="arena-thread-empty">
-            Example history only. Your saved threads will appear here once persistence
-            is connected.
-          </p>
+          {threadNotice !== null ? (
+            <p className="arena-thread-empty">{threadNotice}</p>
+          ) : visibleThreads.length === 0 ? (
+            <p className="arena-thread-empty">
+              Your saved comparisons will appear here after the first prompt.
+            </p>
+          ) : null}
         </div>
 
         <div className="arena-sidebar-footer">
@@ -394,6 +542,35 @@ export function DesignShell({
                   </div>
                 ))}
               </div>
+            ) : null}
+            {activeNav === "arena" &&
+            isAuthLoaded &&
+            isSignedIn &&
+            activeThreadId !== null ? (
+              <>
+                <button
+                  aria-label={
+                    activeThread?.isPublic
+                      ? "Copy public thread link"
+                      : "Share thread publicly"
+                  }
+                  className="arena-share-button"
+                  onClick={() => void handleShare()}
+                  type="button"
+                >
+                  <Icon name="share" size={16} />
+                  {activeThread?.isPublic ? "Copy link" : "Share"}
+                </button>
+                {activeThread?.isPublic ? (
+                  <button
+                    className="arena-private-button"
+                    onClick={() => void handleMakePrivate()}
+                    type="button"
+                  >
+                    Make private
+                  </button>
+                ) : null}
+              </>
             ) : null}
             <span className="arena-tier-indicator">
               <span aria-hidden="true" className="arena-status-dot" />

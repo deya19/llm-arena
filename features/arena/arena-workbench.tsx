@@ -1,7 +1,7 @@
 "use client";
 
 import { SignInButton, useAuth } from "@clerk/nextjs";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ModelCatalogEntry } from "@/features/model-catalog/model-catalog";
 import { ModelPicker } from "@/features/model-catalog/model-picker";
 
@@ -56,6 +56,45 @@ type ConversationSnapshot = Readonly<{
   responses: Readonly<Record<string, ResponseState>>;
   winnerId: string | null;
 }>;
+
+type HistoricalThread = Readonly<{
+  id: string;
+  title: string | null;
+  isPublic?: boolean;
+  turns: readonly Readonly<{
+    id: string;
+    prompt: string;
+    messages: readonly Readonly<{
+      id: string;
+      model: string;
+      role: string;
+      status: string;
+      content: string;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      totalTokens: number | null;
+      timeToFirstTokenMs: number | null;
+      durationMs: number | null;
+      tokensPerSecond: number | null;
+    }>[];
+    winnerId: string | null;
+  }>[];
+}>;
+
+type ArenaWorkbenchProps = Readonly<{
+  threadId: string | null;
+  publicThreadId?: string;
+  readOnly?: boolean;
+  onThreadCreated?: () => void;
+}>;
+
+const historicalModel = (id: string): ModelCatalogEntry => ({
+  id,
+  name: id,
+  contextLength: 0,
+  promptPriceUsd: 0,
+  completionPriceUsd: 0,
+});
 
 const emptyResponse = (): ResponseState => ({
   status: "idle",
@@ -290,8 +329,14 @@ function ConversationTree({
   );
 }
 
-export function ArenaWorkbench() {
+export function ArenaWorkbench({
+  threadId: requestedThreadId,
+  publicThreadId,
+  readOnly = false,
+  onThreadCreated,
+}: ArenaWorkbenchProps) {
   const { isLoaded: isAuthLoaded, isSignedIn } = useAuth();
+  const loadedThreadId = publicThreadId ?? requestedThreadId;
   const [catalogModels, setCatalogModels] = useState<readonly ModelCatalogEntry[]>([]);
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -310,6 +355,80 @@ export function ArenaWorkbench() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
   const wasCancelled = useRef(false);
+
+  useEffect(() => {
+    if (loadedThreadId === null) {
+      return;
+    }
+
+    let isCurrent = true;
+    const endpoint =
+      publicThreadId === undefined ? "/api/threads" : "/api/public/threads";
+
+    fetch(`${endpoint}/${encodeURIComponent(loadedThreadId)}`)
+      .then(async (response) => {
+        const payload = (await response.json()) as unknown;
+        if (!response.ok) throw new Error("thread unavailable");
+        return payload as HistoricalThread;
+      })
+      .then((thread) => {
+        if (!isCurrent) return;
+        const snapshots = thread.turns.map((turn) => {
+          const assistantMessages = turn.messages.filter(
+            (message) => message.role === "ASSISTANT",
+          );
+          const models = assistantMessages.map((message) =>
+            historicalModel(message.model),
+          );
+          const responseMap = Object.fromEntries(
+            assistantMessages.map((message) => [
+              message.model,
+              {
+                status: message.status.toLowerCase() as ResponseStatus,
+                messageId: message.id,
+                text: message.status === "FAILED" ? "" : message.content,
+                error: message.status === "FAILED" ? message.content : null,
+                inputTokens: message.inputTokens,
+                outputTokens: message.outputTokens,
+                totalTokens: message.totalTokens,
+                timeToFirstTokenMs: message.timeToFirstTokenMs,
+                durationMs: message.durationMs,
+                tokensPerSecond: message.tokensPerSecond,
+              } satisfies ResponseState,
+            ]),
+          );
+          const winner = assistantMessages.find(
+            (message) => message.id === turn.winnerId,
+          );
+          return {
+            prompt: turn.prompt,
+            models,
+            responses: responseMap,
+            winnerId: winner?.model ?? null,
+          };
+        });
+        const currentSnapshot = snapshots.at(-1);
+        setThreadId(thread.id);
+        setConversationHistory(snapshots.slice(0, -1));
+        setSubmittedPrompt(currentSnapshot?.prompt ?? null);
+        setSubmittedModels(currentSnapshot?.models ?? []);
+        setResponses(currentSnapshot?.responses ?? {});
+        setWinnerId(currentSnapshot?.winnerId ?? null);
+        setTurnId(thread.turns.at(-1)?.id ?? null);
+        setNotice(
+          publicThreadId === undefined
+            ? "Saved thread loaded. Continue the comparison whenever you are ready."
+            : "Public thread loaded. Sign in to vote for a response.",
+        );
+      })
+      .catch(() => {
+        if (isCurrent) setNotice("That thread could not be loaded. Try again.");
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [loadedThreadId, publicThreadId]);
 
   const selectedModels = catalogModels.filter((model) =>
     selectedIds.includes(model.id),
@@ -465,6 +584,9 @@ export function ArenaWorkbench() {
         throw new Error("message" in payload ? payload.message : SAFE_ERROR_MESSAGE);
       }
 
+      if (threadId === null) {
+        onThreadCreated?.();
+      }
       setThreadId(payload.threadId);
       setTurnId(payload.turnId);
       setNotice("Responses are streaming independently.");
@@ -570,76 +692,78 @@ export function ArenaWorkbench() {
         ) : null}
       </section>
 
-      <section aria-labelledby="prompt-heading" className="arena-composer-wrap">
-        <form className="arena-composer" onSubmit={handleSubmit}>
-          <div className="arena-composer-topline">
-            <label className="arena-composer-label" htmlFor="arena-prompt">
-              <span aria-hidden="true" className="arena-live-dot" />
-              Message LLM Arena
+      {!readOnly ? (
+        <section aria-labelledby="prompt-heading" className="arena-composer-wrap">
+          <form className="arena-composer" onSubmit={handleSubmit}>
+            <div className="arena-composer-topline">
+              <label className="arena-composer-label" htmlFor="arena-prompt">
+                <span aria-hidden="true" className="arena-live-dot" />
+                Message LLM Arena
+              </label>
+              <span className="arena-composer-limit">Up to 20,000 characters</span>
+            </div>
+            <label className="arena-prompt-field">
+              <span className="sr-only">Prompt</span>
+              <textarea
+                aria-describedby="composer-notice"
+                id="arena-prompt"
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Ask anything worth comparing..."
+                rows={3}
+                value={prompt}
+              />
             </label>
-            <span className="arena-composer-limit">Up to 20,000 characters</span>
-          </div>
-          <label className="arena-prompt-field">
-            <span className="sr-only">Prompt</span>
-            <textarea
-              aria-describedby="composer-notice"
-              id="arena-prompt"
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Ask anything worth comparing..."
-              rows={3}
-              value={prompt}
-            />
-          </label>
-          <div className="arena-composer-actions">
-            <ModelPicker
-              onCatalogChange={setCatalogModels}
-              onSelectedIdsChange={setSelectedIds}
-              selectedIds={selectedIds}
-            />
-            {!isAuthLoaded || !isSignedIn ? (
-              <SignInButton mode="modal">
+            <div className="arena-composer-actions">
+              <ModelPicker
+                onCatalogChange={setCatalogModels}
+                onSelectedIdsChange={setSelectedIds}
+                selectedIds={selectedIds}
+              />
+              {!isAuthLoaded || !isSignedIn ? (
+                <SignInButton mode="modal">
+                  <button
+                    className="arena-submit-button"
+                    disabled={!isAuthLoaded || selectedModels.length === 0}
+                    type="button"
+                  >
+                    Sign in to send
+                    <span aria-hidden="true" className="arena-submit-icon">
+                      <span>↑</span>
+                    </span>
+                  </button>
+                </SignInButton>
+              ) : isSubmitting ? (
                 <button
-                  className="arena-submit-button"
-                  disabled={!isAuthLoaded || selectedModels.length === 0}
+                  className="arena-cancel-button"
+                  onClick={handleCancel}
                   type="button"
                 >
-                  Sign in to send
+                  Stop streams
+                </button>
+              ) : (
+                <button
+                  className="arena-submit-button"
+                  disabled={selectedModels.length === 0}
+                  type="submit"
+                >
+                  Send
                   <span aria-hidden="true" className="arena-submit-icon">
                     <span>↑</span>
                   </span>
                 </button>
-              </SignInButton>
-            ) : isSubmitting ? (
-              <button
-                className="arena-cancel-button"
-                onClick={handleCancel}
-                type="button"
-              >
-                Stop streams
-              </button>
-            ) : (
-              <button
-                className="arena-submit-button"
-                disabled={selectedModels.length === 0}
-                type="submit"
-              >
-                Send
-                <span aria-hidden="true" className="arena-submit-icon">
-                  <span>↑</span>
-                </span>
-              </button>
-            )}
-          </div>
-          <div
-            className="arena-composer-footnote"
-            id="composer-notice"
-            aria-live="polite"
-          >
-            <span>{notice}</span>
-            <span className="arena-shortcut">Shift + Enter for a new line</span>
-          </div>
-        </form>
-      </section>
+              )}
+            </div>
+            <div
+              className="arena-composer-footnote"
+              id="composer-notice"
+              aria-live="polite"
+            >
+              <span>{notice}</span>
+              <span className="arena-shortcut">Shift + Enter for a new line</span>
+            </div>
+          </form>
+        </section>
+      ) : null}
 
       <footer className="arena-page-footer">
         <span>Built for honest comparisons.</span>
