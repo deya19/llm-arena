@@ -188,6 +188,7 @@ const readStreamEvents = async (
 
 function ResponseCard({
   completedModelCount,
+  isSignedIn,
   isWinner,
   model,
   onVote,
@@ -195,6 +196,7 @@ function ResponseCard({
   isHistorical = false,
 }: Readonly<{
   completedModelCount: number;
+  isSignedIn: boolean;
   isWinner: boolean;
   model: ModelCatalogEntry;
   onVote: () => void;
@@ -202,7 +204,10 @@ function ResponseCard({
   isHistorical?: boolean;
 }>) {
   const canVote =
-    !isHistorical && response.status === "completed" && completedModelCount >= 2;
+    isSignedIn &&
+    !isHistorical &&
+    response.status === "completed" &&
+    completedModelCount >= 2;
   const statusLabel =
     response.status === "preparing"
       ? "Preparing"
@@ -286,9 +291,11 @@ function ResponseCard({
             ? "Winner"
             : isHistorical
               ? "Previous response"
-              : canVote
-                ? "Vote for this response"
-                : "Vote after two responses"}
+              : !isSignedIn
+                ? "Sign in to vote"
+                : canVote
+                  ? "Vote for this response"
+                  : "Vote after two responses"}
         </button>
       </footer>
     </article>
@@ -297,10 +304,12 @@ function ResponseCard({
 
 function ConversationTree({
   isHistorical = false,
+  isSignedIn,
   onVote,
   snapshot,
 }: Readonly<{
   isHistorical?: boolean;
+  isSignedIn: boolean;
   onVote: (messageId: string, modelId: string) => void;
   snapshot: ConversationSnapshot;
 }>) {
@@ -327,6 +336,7 @@ function ConversationTree({
             <ResponseCard
               completedModelCount={completedModelCount}
               isHistorical={isHistorical}
+              isSignedIn={isSignedIn}
               isWinner={snapshot.winnerId === model.id}
               model={model}
               onVote={() => {
@@ -436,7 +446,9 @@ export function ArenaWorkbench({
         setNotice(
           publicThreadId === undefined
             ? "Saved thread loaded. Continue the comparison whenever you are ready."
-            : "Public thread loaded. Sign in to vote for a response.",
+            : isSignedIn === true
+              ? "Public thread loaded. Vote when at least two responses are complete."
+              : "Public thread loaded. Sign in to vote for a response.",
         );
       })
       .catch(() => {
@@ -449,7 +461,7 @@ export function ArenaWorkbench({
     return () => {
       isCurrent = false;
     };
-  }, [loadedThreadId, publicThreadId, threadLoadAttempt]);
+  }, [isSignedIn, loadedThreadId, publicThreadId, threadLoadAttempt]);
 
   const selectedModels = catalogModels.filter((model) =>
     selectedIds.includes(model.id),
@@ -681,6 +693,7 @@ export function ArenaWorkbench({
         {conversationHistory.map((snapshot, index) => (
           <ConversationTree
             isHistorical
+            isSignedIn={isSignedIn === true}
             key={`${snapshot.prompt}-${index}`}
             onVote={() => undefined}
             snapshot={snapshot}
@@ -689,6 +702,7 @@ export function ArenaWorkbench({
         {submittedPrompt !== null ? (
           <div aria-live="polite">
             <ConversationTree
+              isSignedIn={isSignedIn === true}
               onVote={(messageId, modelId) => {
                 void handleVote(messageId, modelId);
               }}
