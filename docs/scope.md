@@ -25,7 +25,7 @@ There are rough hand-drawn sketches for the arena screen, the leaderboard, and t
 | 5   | Model picker                                | Slice 1    | complete    |
 | 6   | Send a prompt, parallel streams, and voting | Slice 1    | complete    |
 | 7   | App shell & thread history                  | Slice 2    | complete    |
-| 8   | Public thread visibility & sharing          | Slice 3    | not started |
+| 8   | Public thread visibility & sharing          | Slice 3    | complete    |
 | 9   | Leaderboard: global & personal              | Slice 4    | not started |
 
 ## Foundation
@@ -205,7 +205,18 @@ Build checklist:
 - [x] Verify the running shell through the dev server and browser preview
 - [x] Run format, lint, strict typecheck, and production build
 
-The app-shell UI is complete. Real signed-in thread history, thread naming, win records, model responses, and voting remain owned by their later feature slices.
+The app-shell UI is complete. The continuation below replaces the example-only history with real signed-in thread reads while preserving the shell and its preview state.
+
+Thread history continuation decision: Keep thread reads behind authenticated App Router endpoints. The sidebar fetches only the signed-in user's summaries and the active workbench fetches one owned thread's ordered turns and client-safe message metrics. Selecting a thread restores its full conversation as read-only history; new prompts continue the selected thread, while New thread resets the workbench without deleting saved data.
+
+Thread history continuation build checklist:
+
+- [x] Add authenticated thread summary and detail reads
+- [x] Replace example history with the signed-in user's saved threads
+- [x] Restore ordered prompts, responses, metrics, and winners when selected
+- [x] Make New thread and follow-up prompts work across saved threads
+- [x] Preserve safe loading/error states, keyboard access, and responsive behavior
+- [x] Run formatting, lint, strict typecheck, production build, and live smoke checks
 
 UI continuation decision: Rework the arena from a hero-led comparison workbench into a conversation-first shell inspired by ChatGPT's message flow, without copying its branding or colors. A submitted prompt is rendered as a user node, then branches into up to three model response nodes. The branch layout is horizontal on desktop and stacks vertically on narrow screens; the composer stays near the bottom of the conversation so the next prompt is always available.
 
@@ -239,8 +250,16 @@ The Clerk authentication foundation is complete. Persisted user threads, protect
 
 Anyone should be able to open a thread's link and see it, without an account, that's what actually makes it shareable. Only sending a prompt and voting need sign-in. A made-up or deleted thread just shows a plain not-found page either way. The thread's real owner sees everything everyone else sees, plus the ability to actually use it.
 
-- [ ] Decide the approach
-- [ ] Build it
+Decision: Keep `Thread.isPublic` as the visibility source of truth. Add an owner-only visibility mutation, a public `/threads/[threadId]` read experience, and a share control in the owner workspace. Public reads return only the thread conversation and safe metrics; signed-out visitors can read, signed-in visitors can vote, and only the owner can continue the thread. Private, missing, and deleted threads use the same not-found response. Reuse the existing Arcjet request protection for the public read endpoint.
+
+Build checklist:
+
+- [x] Add owner-only visibility update and public thread reads
+- [x] Add share controls and public read-only thread view
+- [x] Allow signed-in visitors to vote on public threads while preserving private access rules
+- [x] Run formatting, lint, strict typecheck, production build, and live HTTP/browser smoke checks
+
+Implementation complete: Public threads are served at `/threads/[threadId]`, with an Arcjet-protected public API read. Owners can publish, copy the public link, or make a thread private again from the arena top bar. Public reads omit owner data and keep the conversation read-only; the vote data remains available so authenticated visitors can vote on completed responses. Unknown and private IDs return not-found behavior. Verification passed with Prettier, ESLint, strict TypeScript, production build, and live requests to the home page, public thread API, and invalid public thread page.
 
 ## Slice 4: Leaderboard
 
