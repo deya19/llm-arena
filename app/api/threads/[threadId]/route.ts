@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   DataModelError,
   getThreadById,
+  serializeThread,
   updateThreadVisibility,
 } from "@/features/data-model/data-model";
 
@@ -11,35 +12,6 @@ export const runtime = "nodejs";
 type RouteContext = Readonly<{
   params: Promise<Readonly<{ threadId: string }>>;
 }>;
-
-const serializeThread = (thread: Awaited<ReturnType<typeof getThreadById>>) =>
-  thread === null
-    ? null
-    : {
-        id: thread.id,
-        title: thread.title,
-        isPublic: thread.isPublic,
-        turns: thread.turns.map((turn) => ({
-          id: turn.id,
-          position: turn.position,
-          prompt: turn.prompt,
-          messages: turn.messages.map((message) => ({
-            id: message.id,
-            model: message.model,
-            role: message.role,
-            status: message.status,
-            content: message.content,
-            inputTokens: message.inputTokens,
-            outputTokens: message.outputTokens,
-            totalTokens: message.totalTokens,
-            timeToFirstTokenMs: message.timeToFirstTokenMs,
-            durationMs: message.durationMs,
-            tokensPerSecond: message.tokensPerSecond,
-          })),
-          winnerId:
-            thread.votes.find((vote) => vote.turnId === turn.id)?.messageId ?? null,
-        })),
-      };
 
 const dataModelErrorResponse = (error: DataModelError): Response =>
   Response.json(
@@ -60,7 +32,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
   const { threadId } = await context.params;
 
   try {
-    const thread = await getThreadById(threadId);
+    const thread = await getThreadById(threadId, userId);
 
     if (thread === null || thread.ownerId !== userId) {
       return Response.json(

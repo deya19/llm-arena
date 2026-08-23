@@ -109,6 +109,21 @@ const emptyResponse = (): ResponseState => ({
   tokensPerSecond: null,
 });
 
+const responseStatusFor = (status: string): ResponseStatus => {
+  switch (status) {
+    case "PENDING":
+      return "preparing";
+    case "STREAMING":
+      return "streaming";
+    case "COMPLETED":
+      return "completed";
+    case "FAILED":
+      return "failed";
+    default:
+      return "failed";
+  }
+};
+
 const formatMetric = (value: number | null, suffix = ""): string =>
   value === null ? "—" : `${value}${suffix}`;
 
@@ -353,6 +368,8 @@ export function ArenaWorkbench({
   const [winnerId, setWinnerId] = useState<string | null>(null);
   const [notice, setNotice] = useState("Three columns. One prompt. No guesswork.");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [threadLoadAttempt, setThreadLoadAttempt] = useState(0);
+  const [isThreadLoadFailed, setIsThreadLoadFailed] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
   const wasCancelled = useRef(false);
 
@@ -384,7 +401,7 @@ export function ArenaWorkbench({
             assistantMessages.map((message) => [
               message.model,
               {
-                status: message.status.toLowerCase() as ResponseStatus,
+                status: responseStatusFor(message.status),
                 messageId: message.id,
                 text: message.status === "FAILED" ? "" : message.content,
                 error: message.status === "FAILED" ? message.content : null,
@@ -415,6 +432,7 @@ export function ArenaWorkbench({
         setResponses(currentSnapshot?.responses ?? {});
         setWinnerId(currentSnapshot?.winnerId ?? null);
         setTurnId(thread.turns.at(-1)?.id ?? null);
+        setIsThreadLoadFailed(false);
         setNotice(
           publicThreadId === undefined
             ? "Saved thread loaded. Continue the comparison whenever you are ready."
@@ -422,13 +440,16 @@ export function ArenaWorkbench({
         );
       })
       .catch(() => {
-        if (isCurrent) setNotice("That thread could not be loaded. Try again.");
+        if (isCurrent) {
+          setIsThreadLoadFailed(true);
+          setNotice("That thread could not be loaded. Try again.");
+        }
       });
 
     return () => {
       isCurrent = false;
     };
-  }, [loadedThreadId, publicThreadId]);
+  }, [loadedThreadId, publicThreadId, threadLoadAttempt]);
 
   const selectedModels = catalogModels.filter((model) =>
     selectedIds.includes(model.id),
@@ -692,7 +713,20 @@ export function ArenaWorkbench({
         ) : null}
       </section>
 
-      {!readOnly ? (
+      {readOnly ? (
+        <div className="arena-composer-footnote" aria-live="polite" role="status">
+          <span>{notice}</span>
+          {isThreadLoadFailed ? (
+            <button
+              className="arena-private-button"
+              onClick={() => setThreadLoadAttempt((attempt) => attempt + 1)}
+              type="button"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : (
         <section aria-labelledby="prompt-heading" className="arena-composer-wrap">
           <form className="arena-composer" onSubmit={handleSubmit}>
             <div className="arena-composer-topline">
@@ -763,7 +797,7 @@ export function ArenaWorkbench({
             </div>
           </form>
         </section>
-      ) : null}
+      )}
 
       <footer className="arena-page-footer">
         <span>Built for honest comparisons.</span>

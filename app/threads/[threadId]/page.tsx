@@ -1,5 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { protectRequest, toArcjetDenialResponse } from "@/features/arcjet/arcjet";
 import { ArenaWorkbench } from "@/features/arena/arena-workbench";
 import { DesignShell } from "@/features/design/design-shell";
 import { getPublicThreadById } from "@/features/data-model/data-model";
@@ -10,10 +12,19 @@ type PublicThreadPageProps = Readonly<{
 
 export default async function PublicThreadPage({ params }: PublicThreadPageProps) {
   const { threadId } = await params;
-  const [{ userId }, thread] = await Promise.all([
-    auth(),
-    getPublicThreadById(threadId),
-  ]);
+  const requestHeaders = await headers();
+  const request = new Request(
+    `http://localhost/threads/${encodeURIComponent(threadId)}`,
+    { headers: requestHeaders },
+  );
+  const arcjetDecision = await protectRequest(request);
+
+  if (toArcjetDenialResponse(arcjetDecision) !== null) {
+    notFound();
+  }
+
+  const { userId } = await auth();
+  const thread = await getPublicThreadById(threadId, userId);
 
   if (thread === null) {
     notFound();

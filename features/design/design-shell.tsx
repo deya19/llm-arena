@@ -110,6 +110,7 @@ const formatThreadDate = (value: string): string =>
   new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   }).format(new Date(value));
 
 const metrics = [
@@ -244,25 +245,30 @@ export function DesignShell({
     }
 
     if (!activeThread.isPublic) {
-      const response = await fetch(
-        `/api/threads/${encodeURIComponent(activeThread.id)}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ isPublic: true }),
-        },
-      );
+      try {
+        const response = await fetch(
+          `/api/threads/${encodeURIComponent(activeThread.id)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ isPublic: true }),
+          },
+        );
 
-      if (!response.ok) {
+        if (!response.ok) {
+          setNotice("This thread could not be shared right now. Try again.");
+          return;
+        }
+
+        setThreads((currentThreads) =>
+          currentThreads.map((thread) =>
+            thread.id === activeThread.id ? { ...thread, isPublic: true } : thread,
+          ),
+        );
+      } catch {
         setNotice("This thread could not be shared right now. Try again.");
         return;
       }
-
-      setThreads((currentThreads) =>
-        currentThreads.map((thread) =>
-          thread.id === activeThread.id ? { ...thread, isPublic: true } : thread,
-        ),
-      );
     }
 
     const shareUrl = `${window.location.origin}/threads/${encodeURIComponent(activeThread.id)}`;
@@ -277,25 +283,30 @@ export function DesignShell({
   const handleMakePrivate = async (): Promise<void> => {
     if (activeThread === null || !activeThread.isPublic) return;
 
-    const response = await fetch(
-      `/api/threads/${encodeURIComponent(activeThread.id)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPublic: false }),
-      },
-    );
+    try {
+      const response = await fetch(
+        `/api/threads/${encodeURIComponent(activeThread.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isPublic: false }),
+        },
+      );
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setNotice("This thread could not be made private right now. Try again.");
+        return;
+      }
+
+      setThreads((currentThreads) =>
+        currentThreads.map((thread) =>
+          thread.id === activeThread.id ? { ...thread, isPublic: false } : thread,
+        ),
+      );
+    } catch {
       setNotice("This thread could not be made private right now. Try again.");
       return;
     }
-
-    setThreads((currentThreads) =>
-      currentThreads.map((thread) =>
-        thread.id === activeThread.id ? { ...thread, isPublic: false } : thread,
-      ),
-    );
     setNotice("This thread is private again.");
   };
 
@@ -414,25 +425,25 @@ export function DesignShell({
             {visibleThreads.map((thread) => {
               const title = thread.title ?? "Untitled comparison";
               return (
-                <button
-                  aria-current={activeThreadId === thread.id ? "page" : undefined}
-                  className={`arena-thread-item ${activeThreadId === thread.id ? "is-active" : ""}`}
-                  key={thread.id}
-                  onClick={() => {
-                    if (onThreadSelect !== undefined) {
-                      onThreadSelect(thread.id, title);
-                    } else {
-                      router.push(`/?threadId=${encodeURIComponent(thread.id)}`);
-                    }
-                  }}
-                  role="listitem"
-                  type="button"
-                >
-                  <span className="arena-thread-item-title">{title}</span>
-                  <span className="arena-thread-item-meta">
-                    {formatThreadDate(thread.updatedAt)}
-                  </span>
-                </button>
+                <div key={thread.id} role="listitem">
+                  <button
+                    aria-current={activeThreadId === thread.id ? "page" : undefined}
+                    className={`arena-thread-item ${activeThreadId === thread.id ? "is-active" : ""}`}
+                    onClick={() => {
+                      if (onThreadSelect !== undefined) {
+                        onThreadSelect(thread.id, title);
+                      } else {
+                        router.push(`/?threadId=${encodeURIComponent(thread.id)}`);
+                      }
+                    }}
+                    type="button"
+                  >
+                    <span className="arena-thread-item-title">{title}</span>
+                    <span className="arena-thread-item-meta">
+                      {formatThreadDate(thread.updatedAt)}
+                    </span>
+                  </button>
+                </div>
               );
             })}
           </div>

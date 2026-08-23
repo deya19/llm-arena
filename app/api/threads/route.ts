@@ -14,7 +14,7 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    const threads = await listThreadsForUser(userId);
+    const threads = await listThreadsForUser(userId, 50);
     return Response.json(threads, {
       headers: { "Cache-Control": "private, no-store" },
     });

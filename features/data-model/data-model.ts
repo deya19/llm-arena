@@ -593,10 +593,11 @@ export const failAssistantMessage = (
     },
   });
 
-export const listThreadsForUser = (userId: string) =>
+export const listThreadsForUser = (userId: string, take = 50) =>
   prisma.thread.findMany({
     where: { ownerId: requireValue(userId, "A user is required.") },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    take: Math.min(Math.max(Math.trunc(take), 1), 100),
     select: {
       id: true,
       title: true,
@@ -606,9 +607,10 @@ export const listThreadsForUser = (userId: string) =>
     },
   });
 
-const threadConversationInclude = () =>
+const threadConversationInclude = (viewerId: string | null) =>
   ({
     votes: {
+      where: viewerId === null ? { id: "anonymous-viewer" } : { userId: viewerId },
       select: { turnId: true, messageId: true },
     },
     turns: {
@@ -621,16 +623,70 @@ const threadConversationInclude = () =>
     },
   }) satisfies Prisma.ThreadInclude;
 
-export const getThreadById = (threadId: string) =>
+type ThreadConversation = Readonly<{
+  id: string;
+  title: string | null;
+  isPublic: boolean;
+  votes: ReadonlyArray<Readonly<{ turnId: string; messageId: string }>>;
+  turns: ReadonlyArray<
+    Readonly<{
+      id: string;
+      position: number;
+      prompt: string;
+      messages: ReadonlyArray<
+        Readonly<{
+          id: string;
+          model: string;
+          role: MessageRole;
+          status: MessageStatus;
+          content: string;
+          inputTokens: number | null;
+          outputTokens: number | null;
+          totalTokens: number | null;
+          timeToFirstTokenMs: number | null;
+          durationMs: number | null;
+          tokensPerSecond: number | null;
+        }>
+      >;
+    }>
+  >;
+}>;
+
+export const serializeThread = (thread: ThreadConversation) => ({
+  id: thread.id,
+  title: thread.title,
+  isPublic: thread.isPublic,
+  turns: thread.turns.map((turn) => ({
+    id: turn.id,
+    position: turn.position,
+    prompt: turn.prompt,
+    messages: turn.messages.map((message) => ({
+      id: message.id,
+      model: message.model,
+      role: message.role,
+      status: message.status,
+      content: message.content,
+      inputTokens: message.inputTokens,
+      outputTokens: message.outputTokens,
+      totalTokens: message.totalTokens,
+      timeToFirstTokenMs: message.timeToFirstTokenMs,
+      durationMs: message.durationMs,
+      tokensPerSecond: message.tokensPerSecond,
+    })),
+    winnerId: thread.votes.find((vote) => vote.turnId === turn.id)?.messageId ?? null,
+  })),
+});
+
+export const getThreadById = (threadId: string, viewerId: string) =>
   prisma.thread.findUnique({
     where: { id: requireValue(threadId, "A thread is required.") },
     include: {
       owner: true,
-      ...threadConversationInclude(),
+      ...threadConversationInclude(requireValue(viewerId, "A user is required.")),
     },
   });
 
-export const getPublicThreadById = (threadId: string) =>
+export const getPublicThreadById = (threadId: string, viewerId: string | null = null) =>
   prisma.thread.findFirst({
     where: {
       id: requireValue(threadId, "A thread is required."),
@@ -638,7 +694,7 @@ export const getPublicThreadById = (threadId: string) =>
     },
     include: {
       owner: { select: { id: true } },
-      ...threadConversationInclude(),
+      ...threadConversationInclude(viewerId),
     },
   });
 
@@ -656,10 +712,7 @@ export const updateThreadVisibility = async (
     throw new DataModelError("NOT_FOUND", "The requested thread was not found.");
   }
 
-  return prisma.thread.findUniqueOrThrow({
-    where: { id: threadId },
-    select: { id: true, isPublic: true },
-  });
+  return { id: threadId, isPublic: input.isPublic };
 };
 
 export const castVote = async (input: CastVoteInput): Promise<VoteResult> => {

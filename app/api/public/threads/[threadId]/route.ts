@@ -1,6 +1,7 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
-import { getPublicThreadById } from "@/features/data-model/data-model";
 import { protectRequest, toArcjetDenialResponse } from "@/features/arcjet/arcjet";
+import { getPublicThreadById, serializeThread } from "@/features/data-model/data-model";
 
 export const runtime = "nodejs";
 
@@ -19,10 +20,11 @@ export async function GET(
     return denialResponse;
   }
 
+  const { userId } = await auth();
   const { threadId } = await context.params;
 
   try {
-    const thread = await getPublicThreadById(threadId);
+    const thread = await getPublicThreadById(threadId, userId);
 
     if (thread === null) {
       return Response.json(
@@ -31,36 +33,9 @@ export async function GET(
       );
     }
 
-    return Response.json(
-      {
-        id: thread.id,
-        title: thread.title,
-        isPublic: thread.isPublic,
-        turns: thread.turns.map((turn) => ({
-          id: turn.id,
-          position: turn.position,
-          prompt: turn.prompt,
-          messages: turn.messages.map((message) => ({
-            id: message.id,
-            model: message.model,
-            role: message.role,
-            status: message.status,
-            content: message.content,
-            inputTokens: message.inputTokens,
-            outputTokens: message.outputTokens,
-            totalTokens: message.totalTokens,
-            timeToFirstTokenMs: message.timeToFirstTokenMs,
-            durationMs: message.durationMs,
-            tokensPerSecond: message.tokensPerSecond,
-          })),
-          winnerId:
-            thread.votes.find((vote) => vote.turnId === turn.id)?.messageId ?? null,
-        })),
-      },
-      {
-        headers: { "Cache-Control": "public, max-age=60, stale-while-revalidate=300" },
-      },
-    );
+    return Response.json(serializeThread(thread), {
+      headers: { "Cache-Control": "private, max-age=0, must-revalidate" },
+    });
   } catch (error) {
     console.error("Public thread load failed", {
       error: error instanceof Error ? error.message : "Unknown public thread error",
