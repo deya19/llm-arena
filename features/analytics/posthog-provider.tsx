@@ -13,11 +13,9 @@ const posthogKey =
 const posthogHost =
   process.env.NEXT_PUBLIC_POSTHOG_HOST?.trim() || "https://us.i.posthog.com";
 
-let isPostHogInitialized = false;
-
 const initializePostHog = (): boolean => {
-  if (isPostHogInitialized || posthogKey === undefined) {
-    return isPostHogInitialized;
+  if (posthog.__loaded || posthogKey === undefined) {
+    return posthog.__loaded;
   }
 
   posthog.init(posthogKey, {
@@ -31,8 +29,7 @@ const initializePostHog = (): boolean => {
       maskTextSelector: ".posthog-mask",
     },
   });
-  isPostHogInitialized = true;
-  return true;
+  return posthog.__loaded;
 };
 
 const SIGNUP_TRACKING_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -45,7 +42,7 @@ function PostHogIdentity() {
   const identifiedUserId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isLoaded || !isPostHogInitialized) {
+    if (!isLoaded || !posthog.__loaded) {
       return;
     }
 
@@ -64,7 +61,7 @@ function PostHogIdentity() {
   }, [isLoaded, userId]);
 
   useEffect(() => {
-    if (!isPostHogInitialized) {
+    if (!posthog.__loaded) {
       return;
     }
 
@@ -81,12 +78,7 @@ function SignupObservation() {
   const { isLoaded, user } = useUser();
 
   useEffect(() => {
-    if (
-      !isLoaded ||
-      user === null ||
-      !isPostHogInitialized ||
-      user.createdAt === null
-    ) {
+    if (!isLoaded || user === null || !posthog.__loaded || user.createdAt === null) {
       return;
     }
 

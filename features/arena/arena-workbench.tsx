@@ -528,6 +528,7 @@ export function ArenaWorkbench({
     selectedIds.includes(model.id),
   );
   const activeModels = submittedPrompt === null ? selectedModels : submittedModels;
+  const isThreadSwitching = loadedThreadId !== null && loadedThreadId !== threadId;
   const completedModelCount = activeModels.filter(
     (model) => responses[model.id]?.status === "completed",
   ).length;
@@ -626,6 +627,11 @@ export function ArenaWorkbench({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+
+    if (isThreadLoading || isThreadSwitching) {
+      setNotice("Wait for the selected thread to finish loading.");
+      return;
+    }
 
     if (!isAuthLoaded || !isSignedIn) {
       captureAnalyticsEvent("sign_in_prompted", { action: "send_prompt" });
@@ -864,7 +870,12 @@ export function ArenaWorkbench({
                 <SignInButton mode="modal">
                   <button
                     className="arena-submit-button"
-                    disabled={!isAuthLoaded || selectedModels.length === 0}
+                    disabled={
+                      !isAuthLoaded ||
+                      selectedModels.length === 0 ||
+                      isThreadLoading ||
+                      isThreadSwitching
+                    }
                     type="button"
                   >
                     Sign in to send
@@ -884,7 +895,9 @@ export function ArenaWorkbench({
               ) : (
                 <button
                   className="arena-submit-button"
-                  disabled={selectedModels.length === 0}
+                  disabled={
+                    selectedModels.length === 0 || isThreadLoading || isThreadSwitching
+                  }
                   type="submit"
                 >
                   Send
