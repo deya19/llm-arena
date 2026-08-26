@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
 import {
+  trackAppError,
   trackModelResponseCompleted,
   trackModelResponseFailed,
 } from "@/features/analytics/analytics";
@@ -283,6 +284,10 @@ export async function POST(request: NextRequest): Promise<Response> {
               error:
                 error instanceof Error ? error.message : "Unknown persistence error",
             });
+            trackAppError(userId, {
+              action: "persist_completed_model_response",
+              errorCategory: "persistence_failure",
+            });
           }
         },
         onError: async () => {
@@ -305,6 +310,10 @@ export async function POST(request: NextRequest): Promise<Response> {
               error:
                 error instanceof Error ? error.message : "Unknown persistence error",
             });
+            trackAppError(userId, {
+              action: "persist_failed_model_response",
+              errorCategory: "persistence_failure",
+            });
           }
         },
       },
@@ -312,6 +321,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   } catch (error) {
     console.error("Model connection is not configured", {
       error: error instanceof Error ? error.message : "Unknown configuration error",
+    });
+    trackAppError(userId, {
+      action: "model_connection",
+      errorCategory: "configuration_failure",
     });
     return Response.json(
       { message: "The model service is not configured right now. Try again later." },

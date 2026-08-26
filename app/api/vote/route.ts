@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
-import { trackVoteCast } from "@/features/analytics/analytics";
+import { trackAppError, trackVoteCast } from "@/features/analytics/analytics";
 import { castVote, DataModelError } from "@/features/data-model/data-model";
 import { protectRequest, toArcjetDenialResponse } from "@/features/arcjet/arcjet";
 
@@ -90,6 +90,10 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     console.error("Vote request failed", {
       error: error instanceof Error ? error.message : "Unknown vote error",
+    });
+    trackAppError(userId, {
+      action: "vote",
+      errorCategory: "unexpected_failure",
     });
 
     return Response.json(

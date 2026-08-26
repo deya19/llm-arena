@@ -44,6 +44,30 @@ const requestArcjet = baseArcjet
     }),
   );
 
+const publicThreadArcjet = baseArcjet
+  .withRule(
+    detectBot({
+      mode: "LIVE",
+      deny: [
+        "CATEGORY:ADVERTISING",
+        "CATEGORY:AI",
+        "CATEGORY:ARCHIVE",
+        "CATEGORY:BOTNET",
+        "CATEGORY:PROGRAMMATIC",
+        "CATEGORY:SEARCH_ENGINE",
+        "CATEGORY:TOOL",
+        "CATEGORY:UNKNOWN",
+      ],
+    }),
+  )
+  .withRule(
+    slidingWindow({
+      mode: "LIVE",
+      interval: "1m",
+      max: 60,
+    }),
+  );
+
 const promptArcjet = arcjet({
   key: requiredEnvironmentVariable("ARCJET_KEY"),
   client: arcjetClient,
@@ -52,6 +76,9 @@ const promptArcjet = arcjet({
 
 export const protectRequest = (request: Request): Promise<ArcjetDecision> =>
   requestArcjet.protect(request);
+
+export const protectPublicThreadRequest = (request: Request): Promise<ArcjetDecision> =>
+  publicThreadArcjet.protect(request);
 
 export const protectModelRequest = (
   request: Request,

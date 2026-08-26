@@ -1,6 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
-import { protectRequest, toArcjetDenialResponse } from "@/features/arcjet/arcjet";
+import {
+  protectPublicThreadRequest,
+  toArcjetDenialResponse,
+} from "@/features/arcjet/arcjet";
 import { getPublicThreadById, serializeThread } from "@/features/data-model/data-model";
 
 export const runtime = "nodejs";
@@ -13,7 +16,7 @@ export async function GET(
   request: NextRequest,
   context: RouteContext,
 ): Promise<Response> {
-  const arcjetDecision = await protectRequest(request);
+  const arcjetDecision = await protectPublicThreadRequest(request);
   const denialResponse = toArcjetDenialResponse(arcjetDecision);
 
   if (denialResponse !== null) {

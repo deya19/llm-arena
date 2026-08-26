@@ -2,6 +2,7 @@
 
 import { SignInButton, useAuth } from "@clerk/nextjs";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { captureAnalyticsEvent } from "@/features/analytics/browser-analytics";
 import type { ModelCatalogEntry } from "@/features/model-catalog/model-catalog";
 import { ModelPicker } from "@/features/model-catalog/model-picker";
 
@@ -95,6 +96,41 @@ const historicalModel = (id: string): ModelCatalogEntry => ({
   promptPriceUsd: 0,
   completionPriceUsd: 0,
 });
+
+const snapshotsForThread = (
+  thread: HistoricalThread,
+): readonly ConversationSnapshot[] =>
+  thread.turns.map((turn) => {
+    const assistantMessages = turn.messages.filter(
+      (message) => message.role === "ASSISTANT",
+    );
+    const models = assistantMessages.map((message) => historicalModel(message.model));
+    const responses = Object.fromEntries(
+      assistantMessages.map((message) => [
+        message.model,
+        {
+          status: responseStatusFor(message.status),
+          messageId: message.id,
+          text: message.status === "FAILED" ? "" : message.content,
+          error: message.status === "FAILED" ? message.content : null,
+          inputTokens: message.inputTokens,
+          outputTokens: message.outputTokens,
+          totalTokens: message.totalTokens,
+          timeToFirstTokenMs: message.timeToFirstTokenMs,
+          durationMs: message.durationMs,
+          tokensPerSecond: message.tokensPerSecond,
+        } satisfies ResponseState,
+      ]),
+    );
+    const winner = assistantMessages.find((message) => message.id === turn.winnerId);
+
+    return {
+      prompt: turn.prompt,
+      models,
+      responses,
+      winnerId: winner?.model ?? null,
+    };
+  });
 
 const emptyResponse = (): ResponseState => ({
   status: "idle",
@@ -244,7 +280,7 @@ function ResponseCard({
 
       <div className="arena-response-body" aria-live="polite">
         {response.text.length > 0 ? (
-          <p className="arena-response-text">{response.text}</p>
+          <p className="arena-response-text posthog-mask">{response.text}</p>
         ) : response.error !== null ? (
           <p className="arena-response-error">{response.error}</p>
         ) : (
@@ -302,6 +338,21 @@ function ResponseCard({
   );
 }
 
+function ThreadLoadingState() {
+  return (
+    <div
+      aria-label="Loading saved thread"
+      className="arena-conversation-loading"
+      role="status"
+    >
+      <span className="arena-loading-line is-wide" />
+      <span className="arena-loading-line" />
+      <span className="arena-loading-line is-short" />
+      <strong>Loading saved thread…</strong>
+    </div>
+  );
+}
+
 function ConversationTree({
   isHistorical = false,
   isSignedIn,
@@ -325,7 +376,7 @@ function ConversationTree({
         </span>
         <div>
           <span className="arena-node-label">You</span>
-          <p>{snapshot.prompt}</p>
+          <p className="posthog-mask">{snapshot.prompt}</p>
         </div>
       </div>
       <div aria-hidden="true" className="arena-tree-trunk" />
@@ -379,9 +430,17 @@ export function ArenaWorkbench({
   const [notice, setNotice] = useState("Three columns. One prompt. No guesswork.");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [threadLoadAttempt, setThreadLoadAttempt] = useState(0);
+  const [isThreadLoading, setIsThreadLoading] = useState(loadedThreadId !== null);
   const [isThreadLoadFailed, setIsThreadLoadFailed] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
+  const threadCache = useRef(new Map<string, HistoricalThread>());
   const wasCancelled = useRef(false);
+
+  useEffect(() => {
+    captureAnalyticsEvent("arena_viewed", {
+      public_thread: publicThreadId !== undefined,
+    });
+  }, [publicThreadId]);
 
   useEffect(() => {
     if (loadedThreadId === null) {
@@ -389,51 +448,36 @@ export function ArenaWorkbench({
     }
 
     let isCurrent = true;
+    const cachedThread = threadCache.current.get(loadedThreadId);
+    if (cachedThread === undefined) {
+      queueMicrotask(() => {
+        if (isCurrent) {
+          setIsThreadLoading(true);
+          setIsThreadLoadFailed(false);
+        }
+      });
+    }
     const endpoint =
       publicThreadId === undefined ? "/api/threads" : "/api/public/threads";
+    const threadPromise =
+      cachedThread === undefined
+        ? fetch(`${endpoint}/${encodeURIComponent(loadedThreadId)}`).then(
+            async (response) => {
+              const payload = (await response.json()) as unknown;
+              if (!response.ok) throw new Error("thread unavailable");
+              return payload as HistoricalThread;
+            },
+          )
+        : Promise.resolve(cachedThread);
 
-    fetch(`${endpoint}/${encodeURIComponent(loadedThreadId)}`)
-      .then(async (response) => {
-        const payload = (await response.json()) as unknown;
-        if (!response.ok) throw new Error("thread unavailable");
-        return payload as HistoricalThread;
-      })
+    threadPromise
       .then((thread) => {
         if (!isCurrent) return;
-        const snapshots = thread.turns.map((turn) => {
-          const assistantMessages = turn.messages.filter(
-            (message) => message.role === "ASSISTANT",
-          );
-          const models = assistantMessages.map((message) =>
-            historicalModel(message.model),
-          );
-          const responseMap = Object.fromEntries(
-            assistantMessages.map((message) => [
-              message.model,
-              {
-                status: responseStatusFor(message.status),
-                messageId: message.id,
-                text: message.status === "FAILED" ? "" : message.content,
-                error: message.status === "FAILED" ? message.content : null,
-                inputTokens: message.inputTokens,
-                outputTokens: message.outputTokens,
-                totalTokens: message.totalTokens,
-                timeToFirstTokenMs: message.timeToFirstTokenMs,
-                durationMs: message.durationMs,
-                tokensPerSecond: message.tokensPerSecond,
-              } satisfies ResponseState,
-            ]),
-          );
-          const winner = assistantMessages.find(
-            (message) => message.id === turn.winnerId,
-          );
-          return {
-            prompt: turn.prompt,
-            models,
-            responses: responseMap,
-            winnerId: winner?.model ?? null,
-          };
-        });
+        threadCache.current.set(thread.id, thread);
+        if (cachedThread !== undefined) {
+          captureAnalyticsEvent("thread_cache_restored");
+        }
+        const snapshots = snapshotsForThread(thread);
         const currentSnapshot = snapshots.at(-1);
         setThreadId(thread.id);
         setConversationHistory(snapshots.slice(0, -1));
@@ -442,7 +486,22 @@ export function ArenaWorkbench({
         setResponses(currentSnapshot?.responses ?? {});
         setWinnerId(currentSnapshot?.winnerId ?? null);
         setTurnId(thread.turns.at(-1)?.id ?? null);
+        setIsThreadLoading(false);
         setIsThreadLoadFailed(false);
+        if (cachedThread === undefined) {
+          captureAnalyticsEvent("thread_opened", {
+            public_thread: publicThreadId !== undefined,
+            turn_count: thread.turns.length,
+          });
+          if (publicThreadId !== undefined) {
+            captureAnalyticsEvent("public_thread_viewed", {
+              turn_count: thread.turns.length,
+            });
+            captureAnalyticsEvent("shared_link_opened", {
+              turn_count: thread.turns.length,
+            });
+          }
+        }
         setNotice(
           publicThreadId === undefined
             ? "Saved thread loaded. Continue the comparison whenever you are ready."
@@ -453,8 +512,23 @@ export function ArenaWorkbench({
       })
       .catch(() => {
         if (isCurrent) {
+          captureAnalyticsEvent("thread_load_failed");
+          if (publicThreadId === undefined) {
+            setThreadId(null);
+            setTurnId(null);
+            setConversationHistory([]);
+            setSubmittedPrompt(null);
+            setSubmittedModels([]);
+            setResponses({});
+            setWinnerId(null);
+          }
+          setIsThreadLoading(false);
           setIsThreadLoadFailed(true);
-          setNotice("That thread could not be loaded. Try again.");
+          setNotice(
+            publicThreadId === undefined
+              ? "That thread could not be loaded. You can start a new comparison."
+              : "That thread could not be loaded. Try again.",
+          );
         }
       });
 
@@ -467,6 +541,8 @@ export function ArenaWorkbench({
     selectedIds.includes(model.id),
   );
   const activeModels = submittedPrompt === null ? selectedModels : submittedModels;
+  const isThreadSwitching =
+    !isThreadLoadFailed && loadedThreadId !== null && loadedThreadId !== threadId;
   const completedModelCount = activeModels.filter(
     (model) => responses[model.id]?.status === "completed",
   ).length;
@@ -499,6 +575,7 @@ export function ArenaWorkbench({
       status: "streaming",
     }));
 
+    captureAnalyticsEvent("model_stream_started", { model: prepared.model });
     try {
       const response = await fetch("/api/model", {
         method: "POST",
@@ -547,10 +624,15 @@ export function ArenaWorkbench({
         }
       });
     } catch {
+      const isCancelled = controller.signal.aborted;
+      captureAnalyticsEvent(
+        isCancelled ? "model_stream_cancelled" : "model_stream_failed",
+        { model: prepared.model },
+      );
       updateResponse(prepared.model, (current) => ({
         ...current,
-        status: controller.signal.aborted ? "cancelled" : "failed",
-        error: controller.signal.aborted ? "Response cancelled." : SAFE_ERROR_MESSAGE,
+        status: isCancelled ? "cancelled" : "failed",
+        error: isCancelled ? "Response cancelled." : SAFE_ERROR_MESSAGE,
       }));
     } finally {
       controllers.current.delete(prepared.model);
@@ -560,22 +642,33 @@ export function ArenaWorkbench({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
 
+    if (isThreadLoading || isThreadSwitching) {
+      setNotice("Wait for the selected thread to finish loading.");
+      return;
+    }
+
     if (!isAuthLoaded || !isSignedIn) {
+      captureAnalyticsEvent("sign_in_prompted", { action: "send_prompt" });
       setNotice("Sign in to send a prompt and compare models.");
       return;
     }
 
     if (prompt.trim().length === 0) {
+      captureAnalyticsEvent("prompt_validation_failed", { reason: "empty_prompt" });
       setNotice("Add a prompt when you are ready to compare responses.");
       return;
     }
 
     if (selectedModels.length === 0) {
+      captureAnalyticsEvent("prompt_validation_failed", { reason: "no_models" });
       setNotice("Select at least one model before comparing.");
       return;
     }
 
     if (submittedPrompt !== null) {
+      captureAnalyticsEvent("follow_up_prompt_submitted", {
+        model_count: selectedModels.length,
+      });
       setConversationHistory((currentHistory) => [
         ...currentHistory,
         {
@@ -617,6 +710,10 @@ export function ArenaWorkbench({
         throw new Error("message" in payload ? payload.message : SAFE_ERROR_MESSAGE);
       }
 
+      captureAnalyticsEvent("comparison_started", {
+        model_count: payload.messages.length,
+      });
+      threadCache.current.delete(payload.threadId);
       if (threadId === null) {
         onThreadCreated?.();
       }
@@ -632,6 +729,7 @@ export function ArenaWorkbench({
         setNotice("Every response is visible. Vote when at least two have finished.");
       }
     } catch {
+      captureAnalyticsEvent("comparison_start_failed");
       setNotice("The comparison could not be started right now. Try again.");
       setResponses((currentResponses) =>
         Object.fromEntries(
@@ -648,6 +746,7 @@ export function ArenaWorkbench({
 
   const handleCancel = (): void => {
     wasCancelled.current = true;
+    captureAnalyticsEvent("comparison_cancelled");
     cancelStreams();
     setIsSubmitting(false);
     setNotice("Comparison cancelled. You can send the prompt again.");
@@ -659,6 +758,7 @@ export function ArenaWorkbench({
       return;
     }
 
+    captureAnalyticsEvent("vote_attempted");
     try {
       const response = await fetch("/api/vote", {
         method: "POST",
@@ -670,9 +770,15 @@ export function ArenaWorkbench({
         throw new Error(SAFE_ERROR_MESSAGE);
       }
 
+      const result = (await response.json()) as Readonly<{ type?: string }>;
+      captureAnalyticsEvent(
+        result.type === "already-voted" ? "vote_duplicate" : "vote_succeeded",
+      );
+      threadCache.current.delete(threadId);
       setWinnerId(modelId);
       setNotice("Vote saved. The other responses remain visible for comparison.");
     } catch {
+      captureAnalyticsEvent("vote_failed");
       setNotice("The vote could not be saved right now. Try again.");
     }
   };
@@ -699,7 +805,9 @@ export function ArenaWorkbench({
             snapshot={snapshot}
           />
         ))}
-        {submittedPrompt !== null ? (
+        {isThreadLoading ? (
+          <ThreadLoadingState />
+        ) : submittedPrompt !== null ? (
           <div aria-live="polite">
             <ConversationTree
               isSignedIn={isSignedIn === true}
@@ -733,7 +841,12 @@ export function ArenaWorkbench({
           {isThreadLoadFailed ? (
             <button
               className="arena-private-button"
-              onClick={() => setThreadLoadAttempt((attempt) => attempt + 1)}
+              onClick={() => {
+                captureAnalyticsEvent("thread_load_retry_clicked");
+                setIsThreadLoading(true);
+                setIsThreadLoadFailed(false);
+                setThreadLoadAttempt((attempt) => attempt + 1);
+              }}
               type="button"
             >
               Retry
@@ -771,7 +884,12 @@ export function ArenaWorkbench({
                 <SignInButton mode="modal">
                   <button
                     className="arena-submit-button"
-                    disabled={!isAuthLoaded || selectedModels.length === 0}
+                    disabled={
+                      !isAuthLoaded ||
+                      selectedModels.length === 0 ||
+                      isThreadLoading ||
+                      isThreadSwitching
+                    }
                     type="button"
                   >
                     Sign in to send
@@ -791,7 +909,9 @@ export function ArenaWorkbench({
               ) : (
                 <button
                   className="arena-submit-button"
-                  disabled={selectedModels.length === 0}
+                  disabled={
+                    selectedModels.length === 0 || isThreadLoading || isThreadSwitching
+                  }
                   type="submit"
                 >
                   Send

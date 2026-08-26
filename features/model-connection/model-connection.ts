@@ -1,5 +1,6 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { streamText, type LanguageModelUsage } from "ai";
+import { isArenaChatModel } from "@/features/model-catalog/model-catalog";
 
 const CLIENT_ERROR_MESSAGE = "The model could not answer right now. Try again.";
 const MAX_PROMPT_LENGTH = 20_000;
@@ -85,7 +86,8 @@ const parseModel = (value: unknown): string | null => {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_MODEL_LENGTH ||
-    !value.endsWith(FREE_MODEL_SUFFIX)
+    !value.endsWith(FREE_MODEL_SUFFIX) ||
+    !isArenaChatModel(value)
   ) {
     return null;
   }

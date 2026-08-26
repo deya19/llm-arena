@@ -3,6 +3,7 @@
 import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { captureAnalyticsEvent } from "@/features/analytics/browser-analytics";
 import { ModelPicker } from "@/features/model-catalog/model-picker";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
@@ -54,7 +55,7 @@ const navItems = [
     key: "leaderboard",
     label: "Leaderboard",
     icon: "layers" as const,
-    href: null,
+    href: "/leaderboard",
   },
   { key: "models", label: "Models", icon: "panel" as const, href: "/models" },
 ] as const;
@@ -239,6 +240,7 @@ export function DesignShell({
   const themeLabel = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
 
   const handleShare = async (): Promise<void> => {
+    captureAnalyticsEvent("share_attempted");
     if (activeThread === null) {
       setNotice("Open a saved thread before sharing it.");
       return;
@@ -256,10 +258,14 @@ export function DesignShell({
         );
 
         if (!response.ok) {
+          captureAnalyticsEvent("share_failed", { reason: "visibility_update" });
           setNotice("This thread could not be shared right now. Try again.");
           return;
         }
 
+        captureAnalyticsEvent("thread_visibility_changed", {
+          is_public: true,
+        });
         setThreads((currentThreads) =>
           currentThreads.map((thread) =>
             thread.id === activeThread.id ? { ...thread, isPublic: true } : thread,
@@ -274,8 +280,10 @@ export function DesignShell({
     const shareUrl = `${window.location.origin}/threads/${encodeURIComponent(activeThread.id)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
+      captureAnalyticsEvent("share_link_copied", { public_thread: true });
       setNotice("Public link copied to your clipboard.");
     } catch {
+      captureAnalyticsEvent("share_failed", { reason: "clipboard" });
       setNotice(`Share this link: ${shareUrl}`);
     }
   };
@@ -298,6 +306,9 @@ export function DesignShell({
         return;
       }
 
+      captureAnalyticsEvent("thread_visibility_changed", {
+        is_public: false,
+      });
       setThreads((currentThreads) =>
         currentThreads.map((thread) =>
           thread.id === activeThread.id ? { ...thread, isPublic: false } : thread,
@@ -323,6 +334,7 @@ export function DesignShell({
   const toggleTheme = (): void => {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
+    captureAnalyticsEvent("theme_changed", { theme: nextTheme });
     document.documentElement.dataset.theme = nextTheme;
   };
 
@@ -362,29 +374,18 @@ export function DesignShell({
               </>
             );
 
-            if (item.href !== null) {
-              return (
-                <Link
-                  aria-current={isActive ? "page" : undefined}
-                  className={`arena-nav-item ${isActive ? "is-active" : ""}`}
-                  href={item.href}
-                  key={item.label}
-                >
-                  {itemContent}
-                </Link>
-              );
-            }
-
             return (
-              <button
+              <Link
                 aria-current={isActive ? "page" : undefined}
                 className={`arena-nav-item ${isActive ? "is-active" : ""}`}
+                href={item.href}
                 key={item.label}
-                onClick={() => setNotice(`${item.label} is coming in a later slice.`)}
-                type="button"
+                onClick={() =>
+                  captureAnalyticsEvent("navigation_clicked", { destination: item.key })
+                }
               >
                 {itemContent}
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -402,6 +403,7 @@ export function DesignShell({
           <button
             className="arena-new-thread"
             onClick={() => {
+              captureAnalyticsEvent("new_thread_started");
               setPrompt("");
               setNotice("New thread ready for your prompt.");
               if (onNewThread !== undefined) {
@@ -430,6 +432,7 @@ export function DesignShell({
                     aria-current={activeThreadId === thread.id ? "page" : undefined}
                     className={`arena-thread-item ${activeThreadId === thread.id ? "is-active" : ""}`}
                     onClick={() => {
+                      captureAnalyticsEvent("thread_opened", { public_thread: false });
                       if (onThreadSelect !== undefined) {
                         onThreadSelect(thread.id, title);
                       } else {
@@ -496,7 +499,13 @@ export function DesignShell({
               </div>
               <div className="arena-auth-actions">
                 <SignInButton mode="modal">
-                  <button className="arena-sign-in-button" type="button">
+                  <button
+                    className="arena-sign-in-button"
+                    onClick={() =>
+                      captureAnalyticsEvent("sign_in_prompted", { action: "shell" })
+                    }
+                    type="button"
+                  >
                     Sign in
                   </button>
                 </SignInButton>
@@ -606,7 +615,13 @@ export function DesignShell({
             ) : null}
             {isAuthLoaded && !isSignedIn ? (
               <SignInButton mode="modal">
-                <button className="arena-topbar-sign-in" type="button">
+                <button
+                  className="arena-topbar-sign-in"
+                  onClick={() =>
+                    captureAnalyticsEvent("sign_in_prompted", { action: "topbar" })
+                  }
+                  type="button"
+                >
                   Sign in
                 </button>
               </SignInButton>
