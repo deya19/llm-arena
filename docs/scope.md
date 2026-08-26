@@ -146,7 +146,7 @@ Build checklist:
 - [x] Add loading, empty, retry, keyboard, and responsive states
 - [x] Run formatting, lint, strict typecheck, production build, and live route/catalog smoke checks
 
-The model catalog is live and shared between the picker and `/models`. Prompt fan-out, response streaming, and voting remain owned by Feature 6.
+The model catalog is live and shared between the picker and `/models`. Prompt fan-out, response streaming, and voting remain owned by Feature 6. The catalog also excludes OpenRouter models currently restricted to agentic harnesses, including the Inkling free entries, so a zero-priced model is not presented as usable chat capability when the upstream API rejects it.
 
 ### 6. Send a prompt, parallel streams, and voting
 
@@ -184,6 +184,19 @@ Feature 6 build checklist:
 - [x] Run format, lint, strict typecheck, production build, and authenticated-boundary smoke checks
 
 PostHog capture is wired through the analytics boundary, but no PostHog keys are configured in this environment yet, so live event delivery remains pending the PostHog account configuration. No fake analytics success is reported.
+
+PostHog browser continuation decision: Use the PostHog wizard-style client provider with manual pageview tracking, pageleave capture, Clerk ID identity synchronization, and no broad autocapture. Enable session replay with all input values masked; prompts and model responses are never sent as analytics properties. Add product events only for meaningful arena, model-picker, thread, sharing, auth-prompt, and leaderboard actions, plus normalized server-side application errors without raw exceptions or provider content. The shared-link funnel now uses `shared_link_opened`; `signed_up` is a client-observed event emitted once for a recently created Clerk account, so it is useful for product analysis but is less authoritative than a verified Clerk webhook. Feature flags, experiments, surveys, group analytics, warehouse exports, and per-token-chunk events remain out of scope until a concrete product hypothesis requires them.
+
+PostHog browser build checklist:
+
+- [x] Add the client provider and PostHog wizard initialization options
+- [x] Add manual pageview and pageleave capture without broad autocapture
+- [x] Synchronize signed-in Clerk identities and reset on sign-out
+- [x] Add privacy-safe arena, model, thread, sharing, auth, and leaderboard events
+- [x] Add normalized server-side application error events
+- [x] Run formatting, lint, strict typecheck, production build, and live browser/HTTP smoke checks
+
+The application now contains the complete privacy-safe PostHog integration and event taxonomy. Live PostHog delivery accepts `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` or the backward-compatible `NEXT_PUBLIC_POSTHOG_KEY` (and optionally `NEXT_PUBLIC_POSTHOG_HOST` or `POSTHOG_HOST`) in the deployment environment; local verification confirms the app remains functional when the token is absent. The expanded event set covers validation, comparison start/cancel/failure, per-model stream start/failure/cancel, catalog load/failure/retry, picker close/search/selection-limit actions, thread load failure/retry/cache restore, follow-ups, sharing attempts/failures, vote attempts/success/duplicate/failure, navigation, and theme changes. It deliberately does not capture content or keystrokes.
 
 ## Slice 2: App shell & thread history
 
@@ -229,7 +242,7 @@ UI continuation build checklist:
 - [x] Preserve independent streaming, safe errors, metrics, voting, focus states, and keyboard access
 - [x] Run formatting, lint, strict typecheck, production build, and a live HTTP/browser smoke check
 
-The conversation tree UI is complete. The warm brown/parchment palette, rust interaction accent, sidebar, thread shell, real streams, metrics, and voting behavior remain intact. Status-pill polish now gives streaming, completed, failed, and cancelled states explicit borders, backgrounds, and readable labels at narrow widths. The conversation tree also uses the available workspace width more fully, and its desktop headers move the status badge to a second row when three-column cards become tight. After submission, the composer now clears immediately while the submitted prompt remains visible as the conversation root. Follow-up submissions snapshot the active turn into in-memory thread history, keeping earlier prompts and model answers visible instead of replacing them. The shell navigation is pinned on desktop and remains mobile-safe, while signed-out users see a direct `Sign in to send` composer action.
+The conversation tree UI is complete. The warm brown/parchment palette, rust interaction accent, sidebar, thread shell, real streams, metrics, and voting behavior remain intact. Status-pill polish now gives streaming, completed, failed, and cancelled states explicit borders, backgrounds, and readable labels at narrow widths. The conversation tree also uses the available workspace width more fully, and its desktop headers move the status badge to a second row when three-column cards become tight. After submission, the composer now clears immediately while the submitted prompt remains visible as the conversation root. Follow-up submissions snapshot the active turn into in-memory thread history, keeping earlier prompts and model answers visible instead of replacing them. The shell navigation is pinned on desktop and remains mobile-safe, while signed-out users see a direct `Sign in to send` composer action. Saved-thread navigation now shows an explicit loading state during restoration instead of briefly displaying the new-thread empty state. The arena keeps successfully loaded thread snapshots in a session-local cache, so switching away and returning restores them without another request; new prompts and votes invalidate the affected snapshot so saved data stays fresh.
 
 Authentication continuation: Use Clerk's official Next.js App Router integration. The Clerk proxy establishes session state while keeping the current public routes public; later sending and voting routes can call `auth()` and protect only those actions. Sign-in and sign-up use catch-all routes with the existing warm Arena appearance, and the shell switches between signed-out actions and Clerk's `UserButton`.
 
@@ -261,14 +274,38 @@ Build checklist:
 
 Implementation complete: Public threads are served at `/threads/[threadId]`, with an Arcjet-protected public API read. Owners can publish, copy the public link, or make a thread private again from the arena top bar. Public reads omit owner data and keep the conversation read-only; the vote data remains available so authenticated visitors can vote on completed responses. Unknown and private IDs return not-found behavior. Verification passed with Prettier, ESLint, strict TypeScript, production build, and live requests to the home page, public thread API, and invalid public thread page.
 
+Public-read abuse hardening decision: Use a dedicated live Arcjet policy for both the server-rendered public thread page and its API read. It keeps Shield, denies botnet, advertising, AI, archive, programmatic, search-engine, tool, and unknown bot categories for the anti-scraping policy, and allows 60 requests per minute per IP. This separates public browsing from the existing 10-request-per-minute model/turn/vote budget. Prompt-injection detection remains limited to model-input routes; sensitive-information scanning, ID enumeration prevention, and response-size/database amplification are not Arcjet concerns and remain outside this change.
+
+Public-read hardening build checklist:
+
+- [x] Decide anti-scraping crawler policy
+- [x] Add dedicated public-read Arcjet bot and rate-limit rules
+- [x] Protect the public page and API with the dedicated policy
+- [x] Run formatting, lint, strict typecheck, production build, and live Arcjet/public-route smoke checks
+
+Public-read hardening verification passed: formatting, ESLint, strict TypeScript, and the production build all pass. A live signed-out request using `curl.exe` was denied with the safe HTTP 403 message by the anti-scraping bot policy, while the server-rendered invalid public-thread path returned the expected not-found response. The local server reports missing public IPs as `127.0.0.1`, so a valid browser allow-path and production Arcjet dashboard event still need verification in a deployed environment.
+
 ## Slice 4: Leaderboard
 
 ### 9. Leaderboard: global & personal
 
 Two leaderboards from the same votes, one for everyone, one just for the signed-in user. Each row's win rate is the big, bold number, in the accent color, with a small bar next to it, always written as "won 4 of 5," never a bare percentage or a made-up score. Smaller, quieter numbers underneath for average speed and time-to-first-token, each clearly labeled. No cost or "cheapest" stat, every model is free, so that number never means anything here. First place gets a subtle highlight, nobody else does.
 
-- [ ] Decide the approach
-- [ ] Build it
+Decision: Add a server-rendered `/leaderboard` page that loads global and, when available, signed-in personal rankings from the same vote records. A model's denominator is the number of completed responses it had in voted comparisons, so `won X of Y` reflects actual head-to-head opportunities rather than only wins. Aggregate latency and token-rate metrics from those same completed responses, keep the personal view behind Clerk session state, and show a sign-in action instead of invented personal data for guests. Keep leaderboard data server-side rather than adding the explicitly out-of-scope public API.
+
+- [x] Decide the approach
+- [x] Build it
+
+Build checklist:
+
+- [x] Add immutable leaderboard aggregation for global and personal records
+- [x] Add the responsive `/leaderboard` page and global/personal toggle
+- [x] Replace the shell placeholder with real leaderboard navigation
+- [x] Show honest win counts, win-rate bars, latency, and token-rate metrics
+- [x] Add empty, signed-out, and data-unavailable states with accessible controls
+- [x] Run formatting, lint, strict typecheck, production build, and live route smoke checks
+
+Implementation complete: The leaderboard ranks models by win rate with deterministic tie breaks, highlights only first place, and reports measurements from completed responses in each voted comparison. Global data is available to all visitors; personal data is loaded only for signed-in users.
 
 ## Not doing right now
 

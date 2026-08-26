@@ -3,8 +3,13 @@ import { PostHog } from "posthog-node";
 type AnalyticsProperties = Readonly<Record<string, string | number | boolean | null>>;
 
 const posthogKey =
-  process.env.POSTHOG_API_KEY?.trim() || process.env.NEXT_PUBLIC_POSTHOG_KEY?.trim();
-const posthogHost = process.env.POSTHOG_HOST?.trim() || "https://us.i.posthog.com";
+  process.env.POSTHOG_API_KEY?.trim() ||
+  process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN?.trim() ||
+  process.env.NEXT_PUBLIC_POSTHOG_KEY?.trim();
+const posthogHost =
+  process.env.POSTHOG_HOST?.trim() ||
+  process.env.NEXT_PUBLIC_POSTHOG_HOST?.trim() ||
+  "https://us.i.posthog.com";
 const posthog =
   posthogKey === undefined ? null : new PostHog(posthogKey, { host: posthogHost });
 
@@ -82,4 +87,17 @@ export const trackVoteCast = (
   }>,
 ): void => {
   capture(userId, "vote_cast", properties);
+};
+
+export const trackAppError = (
+  userId: string,
+  properties: Readonly<{
+    action: string;
+    errorCategory: string;
+  }>,
+): void => {
+  capture(userId, "app_error", {
+    action: properties.action,
+    error_category: properties.errorCategory,
+  });
 };

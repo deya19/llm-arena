@@ -10,6 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { ModelCatalogEntry } from "@/features/model-catalog/model-catalog";
+import { captureAnalyticsEvent } from "@/features/analytics/browser-analytics";
 
 const MAX_SELECTED_MODELS = 3;
 
@@ -65,6 +66,9 @@ export function ModelPicker({
       }
 
       setModels(payload.models);
+      captureAnalyticsEvent("model_catalog_loaded", {
+        model_count: payload.models.length,
+      });
       onCatalogChange?.(payload.models);
       onSelectedIdsChange((currentIds) => {
         const availableIds = new Set(payload.models?.map((model) => model.id));
@@ -76,6 +80,7 @@ export function ModelPicker({
               []);
       });
     } catch {
+      captureAnalyticsEvent("model_catalog_failed");
       setModels([]);
       onCatalogChange?.([]);
       onSelectedIdsChange([]);
@@ -100,11 +105,13 @@ export function ModelPicker({
 
     const handlePointerDown = (event: PointerEvent): void => {
       if (pickerRef.current?.contains(event.target as Node) === false) {
+        captureAnalyticsEvent("model_picker_closed", { method: "outside_click" });
         setIsOpen(false);
       }
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
+        captureAnalyticsEvent("model_picker_closed", { method: "escape" });
         setIsOpen(false);
       }
     };
@@ -136,15 +143,22 @@ export function ModelPicker({
 
   const toggleModel = (modelId: string): void => {
     onSelectedIdsChange((currentIds) => {
-      if (currentIds.includes(modelId)) {
-        return currentIds.filter((id) => id !== modelId);
+      const nextIds = currentIds.includes(modelId)
+        ? currentIds.filter((id) => id !== modelId)
+        : currentIds.length >= MAX_SELECTED_MODELS
+          ? (captureAnalyticsEvent("model_selection_limit_reached", {
+              selected_model_count: currentIds.length,
+            }),
+            currentIds)
+          : [...currentIds, modelId];
+
+      if (nextIds !== currentIds) {
+        captureAnalyticsEvent("model_selection_changed", {
+          selected_model_count: nextIds.length,
+        });
       }
 
-      if (currentIds.length >= MAX_SELECTED_MODELS) {
-        return currentIds;
-      }
-
-      return [...currentIds, modelId];
+      return nextIds;
     });
   };
 
@@ -175,7 +189,10 @@ export function ModelPicker({
           aria-expanded={isOpen}
           className="arena-add-model"
           disabled={isLoading || isAtLimit}
-          onClick={() => setIsOpen((open) => !open)}
+          onClick={() => {
+            captureAnalyticsEvent("model_picker_opened");
+            setIsOpen((open) => !open);
+          }}
           type="button"
         >
           + Add model
@@ -202,6 +219,11 @@ export function ModelPicker({
             <span className="sr-only">Search models</span>
             <input
               onChange={(event) => setSearch(event.target.value)}
+              onBlur={() => {
+                if (search.trim().length > 0) {
+                  captureAnalyticsEvent("model_search_used");
+                }
+              }}
               placeholder="Search by name or ID"
               type="search"
               value={search}
@@ -210,7 +232,13 @@ export function ModelPicker({
           {errorMessage ? (
             <div className="arena-model-picker-error" role="alert">
               <span>{errorMessage}</span>
-              <button onClick={loadCatalog} type="button">
+              <button
+                onClick={() => {
+                  captureAnalyticsEvent("model_catalog_retry_clicked");
+                  void loadCatalog();
+                }}
+                type="button"
+              >
                 Retry
               </button>
             </div>

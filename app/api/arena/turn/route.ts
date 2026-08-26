@@ -1,7 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
-import { trackPromptSubmitted } from "@/features/analytics/analytics";
+import { trackAppError, trackPromptSubmitted } from "@/features/analytics/analytics";
 import { DataModelError, prepareTurnForUser } from "@/features/data-model/data-model";
+import { isArenaChatModel } from "@/features/model-catalog/model-catalog";
 import {
   protectModelRequest,
   protectRequest,
@@ -41,7 +42,8 @@ const parseTurnRequest = (value: unknown): TurnRequest | null => {
       typeof model === "string" &&
       model.length > 0 &&
       model.length <= MAX_MODEL_LENGTH &&
-      model.endsWith(FREE_MODEL_SUFFIX),
+      model.endsWith(FREE_MODEL_SUFFIX) &&
+      isArenaChatModel(model),
   );
   const threadId =
     value.threadId === undefined || value.threadId === null
@@ -138,6 +140,10 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     console.error("Turn preparation failed", {
       error: error instanceof Error ? error.message : "Unknown turn error",
+    });
+    trackAppError(userId, {
+      action: "turn_preparation",
+      errorCategory: "unexpected_failure",
     });
 
     return Response.json(

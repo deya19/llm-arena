@@ -824,3 +824,137 @@ export const castVote = async (input: CastVoteInput): Promise<VoteResult> => {
     }
   });
 };
+
+export type LeaderboardEntry = Readonly<{
+  model: string;
+  wins: number;
+  appearances: number;
+  winRate: number;
+  averageSpeed: number | null;
+  averageTimeToFirstToken: number | null;
+}>;
+
+type LeaderboardAccumulator = Readonly<{
+  model: string;
+  wins: number;
+  appearances: number;
+  speedTotal: number;
+  speedCount: number;
+  timeToFirstTokenTotal: number;
+  timeToFirstTokenCount: number;
+}>;
+
+type LeaderboardMessage = Readonly<{
+  id: string;
+  model: string;
+  status: MessageStatus;
+  tokensPerSecond: number | null;
+  timeToFirstTokenMs: number | null;
+}>;
+
+const addMetric = (
+  total: number,
+  count: number,
+  value: number | null,
+): Readonly<{ total: number; count: number }> =>
+  value === null ? { total, count } : { total: total + value, count: count + 1 };
+
+const rankLeaderboard = (
+  entries: readonly LeaderboardAccumulator[],
+): LeaderboardEntry[] =>
+  entries
+    .map((entry) => ({
+      model: entry.model,
+      wins: entry.wins,
+      appearances: entry.appearances,
+      winRate: entry.appearances === 0 ? 0 : entry.wins / entry.appearances,
+      averageSpeed: entry.speedCount === 0 ? null : entry.speedTotal / entry.speedCount,
+      averageTimeToFirstToken:
+        entry.timeToFirstTokenCount === 0
+          ? null
+          : entry.timeToFirstTokenTotal / entry.timeToFirstTokenCount,
+    }))
+    .sort(
+      (left, right) =>
+        right.winRate - left.winRate ||
+        right.wins - left.wins ||
+        right.appearances - left.appearances ||
+        left.model.localeCompare(right.model),
+    );
+
+const addLeaderboardMessage = (
+  entries: readonly LeaderboardAccumulator[],
+  message: LeaderboardMessage,
+  winnerMessageId: string,
+): LeaderboardAccumulator[] => {
+  if (message.status !== MessageStatus.COMPLETED) return [...entries];
+
+  const current = entries.find((entry) => entry.model === message.model) ?? {
+    model: message.model,
+    wins: 0,
+    appearances: 0,
+    speedTotal: 0,
+    speedCount: 0,
+    timeToFirstTokenTotal: 0,
+    timeToFirstTokenCount: 0,
+  };
+  const speed = addMetric(
+    current.speedTotal,
+    current.speedCount,
+    message.tokensPerSecond,
+  );
+  const timeToFirstToken = addMetric(
+    current.timeToFirstTokenTotal,
+    current.timeToFirstTokenCount,
+    message.timeToFirstTokenMs,
+  );
+  const nextEntry = {
+    ...current,
+    wins: current.wins + (message.id === winnerMessageId ? 1 : 0),
+    appearances: current.appearances + 1,
+    speedTotal: speed.total,
+    speedCount: speed.count,
+    timeToFirstTokenTotal: timeToFirstToken.total,
+    timeToFirstTokenCount: timeToFirstToken.count,
+  };
+
+  return entries.some((entry) => entry.model === message.model)
+    ? entries.map((entry) => (entry.model === message.model ? nextEntry : entry))
+    : [...entries, nextEntry];
+};
+
+export const getLeaderboard = async (
+  userId: string | null = null,
+): Promise<LeaderboardEntry[]> => {
+  const votes = await prisma.vote.findMany({
+    where: userId === null ? undefined : { userId },
+    select: {
+      messageId: true,
+      turn: {
+        select: {
+          messages: {
+            select: {
+              id: true,
+              model: true,
+              status: true,
+              tokensPerSecond: true,
+              timeToFirstTokenMs: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const accumulators = votes.reduce<LeaderboardAccumulator[]>(
+    (entries, vote) =>
+      vote.turn.messages.reduce(
+        (nextEntries, message) =>
+          addLeaderboardMessage(nextEntries, message, vote.messageId),
+        entries,
+      ),
+    [],
+  );
+
+  return rankLeaderboard(accumulators);
+};

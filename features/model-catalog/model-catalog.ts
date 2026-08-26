@@ -1,6 +1,13 @@
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const FREE_MODEL_SUFFIX = ":free";
 const CATALOG_REVALIDATION_SECONDS = 300;
+const UNSUPPORTED_CHAT_MODEL_IDS = new Set([
+  "thinkingmachines/inkling:free",
+  "thinkingmachines/inkling-small:free",
+]);
+
+export const isArenaChatModel = (modelId: string): boolean =>
+  !UNSUPPORTED_CHAT_MODEL_IDS.has(modelId);
 
 export type ModelCatalogEntry = Readonly<{
   id: string;
@@ -61,6 +68,7 @@ const parseCatalogEntry = (value: unknown): ModelCatalogEntry | null => {
   if (
     id.length === 0 ||
     !id.endsWith(FREE_MODEL_SUFFIX) ||
+    !isArenaChatModel(id) ||
     contextLength === null ||
     contextLength <= 0 ||
     promptPriceUsd === null ||
