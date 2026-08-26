@@ -513,9 +513,22 @@ export function ArenaWorkbench({
       .catch(() => {
         if (isCurrent) {
           captureAnalyticsEvent("thread_load_failed");
+          if (publicThreadId === undefined) {
+            setThreadId(null);
+            setTurnId(null);
+            setConversationHistory([]);
+            setSubmittedPrompt(null);
+            setSubmittedModels([]);
+            setResponses({});
+            setWinnerId(null);
+          }
           setIsThreadLoading(false);
           setIsThreadLoadFailed(true);
-          setNotice("That thread could not be loaded. Try again.");
+          setNotice(
+            publicThreadId === undefined
+              ? "That thread could not be loaded. You can start a new comparison."
+              : "That thread could not be loaded. Try again.",
+          );
         }
       });
 
@@ -528,7 +541,8 @@ export function ArenaWorkbench({
     selectedIds.includes(model.id),
   );
   const activeModels = submittedPrompt === null ? selectedModels : submittedModels;
-  const isThreadSwitching = loadedThreadId !== null && loadedThreadId !== threadId;
+  const isThreadSwitching =
+    !isThreadLoadFailed && loadedThreadId !== null && loadedThreadId !== threadId;
   const completedModelCount = activeModels.filter(
     (model) => responses[model.id]?.status === "completed",
   ).length;
