@@ -278,6 +278,9 @@ button:disabled {
 }
 
 .arena-thread-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   margin: 34px 24px 0;
   padding-top: 25px;
@@ -305,7 +308,13 @@ button:disabled {
 .arena-thread-history {
   display: grid;
   gap: 7px;
-  margin-top: 20px;
+  flex: 1 1 auto;
+  align-content: start;
+  min-height: 0;
+  max-height: 416px;
+  padding: 5px;
+  margin: 15px -5px -5px;
+  overflow-y: auto;
 }
 
 .arena-thread-item {

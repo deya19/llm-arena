@@ -104,6 +104,19 @@ Data-access build checklist:
 
 The repository is in `features/data-model/data-model.ts`. The Prisma Postgres adapter now uses explicit connection and interactive-transaction wait windows, plus an explicit `sslmode=verify-full` normalization for pooled URLs. A direct interactive transaction smoke check succeeds against the configured database; no migration changes were made.
 
+Deployment continuation decision: Deploy the existing Next.js application to Vercel through the authenticated CLI and preserve all server-only credentials as Vercel environment variables. The production build must generate Prisma's client in the clean Vercel environment before Next.js compiles, so the build script owns that generation step rather than relying on an ignored local artifact.
+
+Deployment build checklist:
+
+- [x] Authenticate the Vercel CLI and create/connect the `llm-arena` project
+- [x] Identify the clean-build Prisma client generation failure
+- [x] Make the production build generate Prisma before Next.js
+- [x] Configure production environment variables in Vercel
+- [x] Deploy a successful production build
+- [x] Verify the deployed public routes and authenticated configuration
+
+Deployment complete: Vercel project `llm-arena` is connected to `https://github.com/deya19/llm-arena`, production environment variables are configured with server-only credentials stored as sensitive values, and the ready production deployment is aliased at `https://llm-arena-pied.vercel.app`. The clean Vercel build generates Prisma before Next.js. Live checks returned HTTP 200 for the home page, models page, leaderboard, sign-in route, and `/api/models`; the API returned the configured free-tier catalog. PostHog is configured from the existing local `NEXT_PUBLIC_POSTHOG_KEY` and `NEXT_PUBLIC_POSTHOG_HOST` values; no separate server-only PostHog key was present.
+
 ### 4. Design & look
 
 A coffee or dark brown background, warm, not neutral gray or true black. One accent color, rust, used only for things you interact with, buttons, links, focus states, the win-rate bar, never as decoration. Because the background and the accent are both warm tones from the same family, the accent has to stay clearly brighter and more saturated than the background, enough that a button never blends into the page behind it, that's a real risk with two warm colors this close and worth checking by eye, not just by the numbers. Blue, indigo, and purple are never the accent, under any circumstance. Green is reserved only for marking a winner, red only for errors, never reused for anything else. Contrast should genuinely hold up in both light and dark mode, not just look fine at a glance.
@@ -231,6 +244,13 @@ Thread history continuation build checklist:
 - [x] Preserve safe loading/error states, keyboard access, and responsive behavior
 - [x] Run formatting, lint, strict typecheck, production build, and live smoke checks
 
+Sidebar scroll fix: the thread history had `overflow-y: auto` but no bounded height, so long histories spilled over the sidebar footer instead of scrolling. `.arena-thread-list` is now a flex column and `.arena-thread-history` fills the space between the new-thread button and the footer with `max-height: 416px` (about seven thread cards), so it scrolls whenever threads exceed that space and shrinks gracefully on short viewports.
+
+Sidebar scroll fix checklist:
+
+- [x] Bound the history height (flex column + `max-height: 416px`, `align-content: start`)
+- [x] Run format, lint, strict typecheck, and production build
+
 UI continuation decision: Rework the arena from a hero-led comparison workbench into a conversation-first shell inspired by ChatGPT's message flow, without copying its branding or colors. A submitted prompt is rendered as a user node, then branches into up to three model response nodes. The branch layout is horizontal on desktop and stacks vertically on narrow screens; the composer stays near the bottom of the conversation so the next prompt is always available.
 
 UI continuation build checklist:
@@ -256,6 +276,8 @@ Authentication build checklist:
 - [x] Verify signed-out responses from `/`, `/sign-in`, and `/sign-up`, plus the production build
 
 The Clerk authentication foundation is complete. Persisted user threads, protected prompt submission, and vote authorization remain in their later features.
+
+Sidebar scroll fix: Once a signed-in account accumulated more threads than fit the viewport height, the recent-threads list overflowed the sidebar and drew over the pinned footer (user card) instead of scrolling. Root cause: `.arena-thread-list` had `min-height: 0` but no `flex` growth and `.arena-thread-history` had no `overflow`, so extra items just spilled out of the flex column. Fix is CSS-only in `globals.css`: the thread list section is now the flexible middle region (`flex: 1 1 auto`) and the history itself scrolls (`overflow-y: auto` with `min-height: 0`). Matching padding and negative margin on the history keep the global 2px/3px-offset focus outline from being clipped at the scroll edges, preserving the keyboard accessibility baseline. Verified with format, lint, strict typecheck, and production build.
 
 ## Slice 3: Public visibility & sharing
 
