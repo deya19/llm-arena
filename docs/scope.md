@@ -211,6 +211,8 @@ PostHog browser build checklist:
 
 The application now contains the complete privacy-safe PostHog integration and event taxonomy. Live PostHog delivery accepts `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` or the backward-compatible `NEXT_PUBLIC_POSTHOG_KEY` (and optionally `NEXT_PUBLIC_POSTHOG_HOST` or `POSTHOG_HOST`) in the deployment environment; local verification confirms the app remains functional when the token is absent. The expanded event set covers validation, comparison start/cancel/failure, per-model stream start/failure/cancel, catalog load/failure/retry, picker close/search/selection-limit actions, thread load failure/retry/cache restore, follow-ups, sharing attempts/failures, vote attempts/success/duplicate/failure, navigation, and theme changes. It deliberately does not capture content or keystrokes.
 
+`thread_opened` fix: the sidebar click and the workbench load both captured `thread_opened`, so each server-loaded open counted twice, and the click copy had no `turn_count` and always sent `public_thread: false`. Now only the workbench captures it, once the thread data is known. It also fires on a cache restore, and a ref keyed on the thread ID stops a second capture when the load effect reruns for the same thread (for example when Clerk auth state settles). One open now gives one event with `turn_count` and the correct `public_thread`.
+
 ## Slice 2: App shell & thread history
 
 ### 7. App shell & thread history

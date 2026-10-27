@@ -432,7 +432,6 @@ export function DesignShell({
                     aria-current={activeThreadId === thread.id ? "page" : undefined}
                     className={`arena-thread-item ${activeThreadId === thread.id ? "is-active" : ""}`}
                     onClick={() => {
-                      captureAnalyticsEvent("thread_opened", { public_thread: false });
                       if (onThreadSelect !== undefined) {
                         onThreadSelect(thread.id, title);
                       } else {
