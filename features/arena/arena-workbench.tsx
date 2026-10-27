@@ -434,6 +434,7 @@ export function ArenaWorkbench({
   const [isThreadLoadFailed, setIsThreadLoadFailed] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
   const threadCache = useRef(new Map<string, HistoricalThread>());
+  const openedThreadId = useRef<string | null>(null);
   const wasCancelled = useRef(false);
 
   useEffect(() => {
@@ -488,7 +489,8 @@ export function ArenaWorkbench({
         setTurnId(thread.turns.at(-1)?.id ?? null);
         setIsThreadLoading(false);
         setIsThreadLoadFailed(false);
-        if (cachedThread === undefined) {
+        if (openedThreadId.current !== thread.id) {
+          openedThreadId.current = thread.id;
           captureAnalyticsEvent("thread_opened", {
             public_thread: publicThreadId !== undefined,
             turn_count: thread.turns.length,
